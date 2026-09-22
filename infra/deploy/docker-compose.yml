@@ -1,0 +1,32 @@
+name: pasteworks-prod
+
+# Single-host production stack for PasteWorks.
+#
+# One container. The app is a static bundle that runs entirely in the browser:
+# no API, no database, and deliberately NO sign-in - it is a thing to show
+# people, so anyone with the link should be able to open it. That is why there
+# is no Keycloak client and no reference to id.minesmart.cloud anywhere here.
+#
+# It publishes to 127.0.0.1:8460 only; the server's host nginx reverse-proxies
+# https://pasteworks.minesmart.cloud to it and terminates TLS. Same pattern as
+# the rest of the box: assetpro 8410-8413, pidpro 8420-8422, pipelinepro
+# 8430-8431, portal 8440-8441, processpro 8450-8451.
+
+services:
+  # Images are BUILT OFF-SERVER and pushed to ghcr.io; the server only pulls.
+  # Building here pegs the shared-CPU VPS hard enough to trip abuse detection,
+  # so use infra/deploy/build-push.ps1 from a workstation. The build: section
+  # stays for emergencies (docker compose build web).
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/web/Dockerfile
+    image: ghcr.io/jacob12244/pasteworks-web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8460:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

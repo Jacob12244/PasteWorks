@@ -1,0 +1,8 @@
+# Anything the Linux server executes or reads must keep LF endings. A CRLF
+# shebang on the box gives "bad interpreter: /usr/bin/env bash^M", which is a
+# confusing way to find out your editor was on Windows.
+*.sh            text eol=lf
+*.conf          text eol=lf
+Dockerfile      text eol=lf
+docker-compose.yml text eol=lf
+.dockerignore   text eol=lf

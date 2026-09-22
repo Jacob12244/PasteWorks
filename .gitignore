@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.local
+
+# Deploy-time only, and never the same twice; the server makes its own.
+infra/deploy/.env
+
+# Screenshots from tools/shot.mjs
+*.png

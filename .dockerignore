@@ -1,0 +1,10 @@
+# The build context is the repo root, so keep the heavy and irrelevant things
+# out of it - node_modules alone is ~200 MB and is reinstalled in the image.
+#
+# infra/ must NOT be ignored: the Dockerfile copies the in-container nginx
+# config out of infra/deploy/web/.
+node_modules
+dist
+.git
+*.png
+tools
