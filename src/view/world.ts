@@ -12,6 +12,7 @@ import { Overflow } from './spill';
 import { Unit, Thickener, SurgeTank, PlatePress, CakeBin, BinderSilo, Mixer, PastePump } from './units';
 import { buildGround, Underground, PasteLine, scaleFigure, CUT_X } from './terrain';
 import { UpstreamCircuit } from './upstream';
+import { RoomDecor } from './room';
 import { Stage } from './scene';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -184,6 +185,7 @@ class ControlRoom extends Unit {
   private deskGlow: THREE.MeshStandardMaterial;
   private aerial: THREE.Mesh;
   private monitors = new THREE.Group();
+  private decor = new RoomDecor();
 
   constructor() {
     super('CONTROL ROOM', 2.4, '#35e0d0');
@@ -303,6 +305,8 @@ class ControlRoom extends Unit {
     this.aerial.position.set(4.4, 10.4, 2.4);
     g.add(this.aerial);
 
+    g.add(this.decor.group);
+
     const lamp = new THREE.PointLight(0x8fe8ff, 26, 18, 2);
     lamp.position.set(0, 4.9, 0.4);
     g.add(lamp);
@@ -321,6 +325,7 @@ class ControlRoom extends Unit {
   }
 
   update(t: Telemetry) {
+    this.decor.update(t);
     const trip = t.pipe.plugged || t.spills.water > 0.5 || t.spills.slurry > 0.5;
     this.deskGlow.emissive.setHex(trip ? C.red : t.status === 'idle' ? 0x2b7fa0 : C.cyan);
     this.deskGlow.emissiveIntensity = 0.7 + (trip ? 0.9 : 0.4) * (0.5 + 0.5 * Math.sin(t.time * 3));

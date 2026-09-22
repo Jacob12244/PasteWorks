@@ -6,10 +6,14 @@
  * had on the side console - because they ARE the same setpoints, built from
  * the shared spec list and written straight back into the plant.
  *
- *   1  MIMIC         the flowsheet, live, every unit a tile
- *   2  SETPOINTS     every loop, with its instrument tag
- *   3  ANNUNCIATOR   a lamp box; standing conditions flash
- *   4  TRENDS        the last few hours of the numbers that matter
+ *   00 WARNINGS    a banner across the top of the wall, above the screens and
+ *                  double their width. It sits high enough that you catch it
+ *                  flashing out of the corner of your eye and look up to read
+ *                  it, which is exactly what a real alarm banner is for.
+ *   01 MIMIC       the flowsheet, live, every unit a tile
+ *   02 SETPOINTS   every loop, with its instrument tag
+ *   03 INVENTORY   eight trends: every tank, bin, silo and stockpile
+ *   04 PROCESS     eight trends: the numbers you actually control on
  */
 
 import type { Plant, Telemetry } from '../sim/plant';
@@ -112,24 +116,197 @@ const LAMPS: LampSpec[] = [
 interface TrendSpec {
   key: string; label: string; unit: string; colour: string;
   min: number; max: number;
-  /** a reference line drawn across the trace */
+  /** a reference line drawn across the trace - a target, a limit, or full */
   ref?: number;
+  /** decimals on the live readout */
+  dp?: number;
+  /** only meaningful in hard mode; drawn as "not in play" otherwise */
+  hard?: boolean;
   pick: (t: Telemetry) => number;
 }
 
-const TRENDS: TrendSpec[] = [
+/**
+ * Everything that fills up or empties out. A paste plant is a chain of
+ * buffers, and almost every bad shift starts as one of these quietly walking
+ * off the bottom or the top of its range while you watch something else.
+ */
+const LEVEL_TRENDS: TrendSpec[] = [
+  { key: 'srg', label: 'U/F surge tank', unit: '%', colour: '#35e0d0',
+    min: 0, max: 100, ref: 100, pick: (t) => t.ufTank.pct },
+  { key: 'pw', label: 'Process water', unit: '%', colour: '#3fa9f5',
+    min: 0, max: 100, ref: 100, pick: (t) => t.water.pct },
+  { key: 'bed', label: 'Thickener bed', unit: '%', colour: '#c8a6ff',
+    min: 0, max: 130, ref: 100, pick: (t) => t.thickener.bedPct },
+  { key: 'cake', label: 'Filter cake bin', unit: '%', colour: '#e0b866',
+    min: 0, max: 100, pick: (t) => t.cakeBin.pct },
+  { key: 'silo', label: 'Binder silo', unit: '%', colour: '#d9d3c3',
+    min: 0, max: 100, pick: (t) => t.silo.pct },
+  { key: 'media', label: 'Ball hopper', unit: '%', colour: '#9aa7b8',
+    min: 0, max: 100, hard: true, pick: (t) => t.media.pct },
+  { key: 'stope', label: 'Stope 14-2 N', unit: '%', colour: '#9fe870',
+    min: 0, max: 100, ref: 100, dp: 1, pick: (t) => t.stope.pct },
+  { key: 'spill', label: 'Spilled, total', unit: 'm³', colour: '#ff5a3c',
+    min: 0, max: 400, ref: 0, pick: (t) => t.spills.totalM3 },
+];
+
+/** The numbers you actually hold a setpoint against. */
+const PROCESS_TRENDS: TrendSpec[] = [
   { key: 'ucs', label: '28 d UCS', unit: 'kPa', colour: '#9fe870',
     min: 0, max: 2200, ref: DESIGN.targetUcs, pick: (t) => t.mixer.ucs },
   { key: 'prs', label: 'Discharge', unit: 'bar', colour: '#ffab3d',
-    min: 0, max: 140, ref: DESIGN.pumpMaxPressure / 100,
+    min: 0, max: 140, ref: DESIGN.pumpMaxPressure / 100, dp: 1,
     pick: (t) => t.pump.pressure / 100 },
   { key: 'flow', label: 'Placement', unit: 'm³/h', colour: '#35e0d0',
-    min: 0, max: 200, pick: (t) => t.pump.flow },
-  { key: 'pw', label: 'Process water', unit: '%', colour: '#3fa9f5',
-    min: 0, max: 100, ref: 100, pick: (t) => t.water.pct },
+    min: 0, max: 200, dp: 1, pick: (t) => t.pump.flow },
+  { key: 'slump', label: 'Slump, Boger', unit: 'mm', colour: '#7fd4ff',
+    min: 0, max: 200, pick: (t) => t.mixer.slump },
+  { key: 'cw', label: 'Paste solids', unit: '% Cw', colour: '#f0a8d0',
+    min: 55, max: 85, dp: 1, pick: (t) => t.mixer.cw * 100 },
+  { key: 'vel', label: 'Line velocity', unit: 'm/s', colour: '#8fe8ff',
+    min: 0, max: 3, ref: 1, dp: 2, pick: (t) => t.pipe.velocity },
+  { key: 'torq', label: 'Rake torque', unit: '%', colour: '#ff8f6b',
+    min: 0, max: 130, ref: 100, pick: (t) => t.thickener.torque },
+  { key: 'cost', label: 'Cost of fill', unit: '$/m³', colour: '#ffd166',
+    min: 0, max: 40, dp: 2, pick: (t) => t.cost.perM3 },
 ];
 
-const SAMPLES = 420;
+const ALL_TRENDS = [...LEVEL_TRENDS, ...PROCESS_TRENDS];
+
+/** 540 samples at one every 40 shift-seconds is exactly six hours of history. */
+const SAMPLES = 540;
+const SAMPLE_EVERY = 40;
+
+/**
+ * One trend screen: a grid of small multiples on a single canvas.
+ *
+ * Small multiples rather than a stack of full-width strips - at eight traces
+ * a stacked strip is 30 px tall and tells you nothing, where a card twice as
+ * tall and half as wide still has a readable shape and room for the number.
+ */
+class TrendPane {
+  canvas = el('canvas');
+
+  constructor(private specs: TrendSpec[]) {}
+
+  /**
+   * The CONTENT box of the panel, not the border box. getBoundingClientRect
+   * includes the padding, and a canvas sized from it sits inside the padding
+   * and overhangs the panel by exactly that much on the right and bottom -
+   * which is the last column of numbers, sliced off.
+   */
+  private fit() {
+    const p = this.canvas.parentElement!;
+    const cs = getComputedStyle(p);
+    return {
+      w: p.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight),
+      h: p.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom),
+    };
+  }
+
+  resize() {
+    const c = this.canvas;
+    const { w, h } = this.fit();
+    if (w < 2 || h < 2) return;                // minimised, or not laid out yet
+    const dpr = Math.min(devicePixelRatio, 2);
+    c.width = Math.round(w * dpr);
+    c.height = Math.round(h * dpr);
+    c.style.width = w + 'px';
+    c.style.height = h + 'px';
+  }
+
+  draw(hist: Record<string, number[]>, hard: boolean) {
+    const c = this.canvas;
+    const r = this.fit();
+    if (r.w < 2 || r.h < 2) return;
+    if (Math.abs(r.w - parseFloat(c.style.width || '0')) > 2
+      || Math.abs(r.h - parseFloat(c.style.height || '0')) > 2) this.resize();
+
+    const g = c.getContext('2d')!;
+    const dpr = Math.min(devicePixelRatio, 2);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = c.width / dpr, H = c.height / dpr;
+    g.clearRect(0, 0, W, H);
+
+    // one column when the panel is tall and narrow, two when it is not
+    const n = this.specs.length;
+    const cols = W < 330 ? 1 : 2;
+    const rows = Math.ceil(n / cols);
+    const gx = 9, gy = 7;
+    const cw = (W - gx * (cols - 1)) / cols;
+    const ch = (H - gy * (rows - 1)) / rows;
+
+    this.specs.forEach((tr, i) => {
+      const x0 = (i % cols) * (cw + gx);
+      const y0 = Math.floor(i / cols) * (ch + gy);
+      this.cell(g, tr, hist[tr.key], hard, x0, y0, cw, ch);
+    });
+  }
+
+  private cell(
+    g: CanvasRenderingContext2D, tr: TrendSpec, data: number[], hard: boolean,
+    x0: number, y0: number, w: number, h: number,
+  ) {
+    g.fillStyle = 'rgba(255,255,255,0.028)';
+    g.fillRect(x0, y0, w, h);
+
+    const dead = tr.hard && !hard;
+    const padT = 15, padB = 11, padX = 5;
+    const ph = Math.max(6, h - padT - padB);
+    const span = Math.max(tr.max - tr.min, 1e-6);
+    const yAt = (v: number) =>
+      y0 + padT + ph - ((Math.max(tr.min, Math.min(tr.max, v)) - tr.min) / span) * ph;
+
+    if (!dead && tr.ref !== undefined && tr.ref <= tr.max && tr.ref >= tr.min) {
+      g.strokeStyle = 'rgba(255,255,255,0.22)';
+      g.setLineDash([4, 4]);
+      g.beginPath();
+      g.moveTo(x0 + padX, yAt(tr.ref));
+      g.lineTo(x0 + w - padX, yAt(tr.ref));
+      g.stroke();
+      g.setLineDash([]);
+    }
+
+    if (!dead && data && data.length > 1) {
+      const xAt = (k: number) => x0 + padX + ((w - padX * 2) * k) / (SAMPLES - 1);
+      g.strokeStyle = tr.colour;
+      g.lineWidth = 1.5;
+      g.beginPath();
+      for (let k = 0; k < data.length; k++) {
+        const x = xAt(k), y = yAt(data[k]);
+        if (k === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
+      }
+      g.stroke();
+
+      const last = data[data.length - 1];
+      const lx = xAt(data.length - 1);
+      g.fillStyle = tr.colour;
+      g.beginPath();
+      g.arc(lx, yAt(last), 2.2, 0, 7);
+      g.fill();
+
+      g.font = '600 12px ui-monospace, monospace';
+      g.textAlign = 'right';
+      g.fillText(f(last, tr.dp ?? 0), x0 + w - padX, y0 + 11);
+    }
+
+    g.fillStyle = dead ? '#3d4858' : '#8b9bb0';
+    g.font = '9.5px ui-monospace, monospace';
+    g.textAlign = 'left';
+    g.fillText(tr.label, x0 + padX + 1, y0 + 11);
+
+    g.fillStyle = dead ? '#333d4b' : '#54627a';
+    g.font = '8.5px ui-monospace, monospace';
+    g.fillText(tr.min + ' – ' + tr.max + '  ' + tr.unit, x0 + padX + 1, y0 + h - 3);
+
+    if (dead) {
+      g.fillStyle = '#3d4858';
+      g.font = '9px ui-monospace, monospace';
+      g.textAlign = 'center';
+      g.fillText('STANDARD MODE — NOT IN PLAY', x0 + w / 2, y0 + padT + ph / 2);
+    }
+  }
+}
 
 export class Scada {
   root = el('div');
@@ -146,7 +323,9 @@ export class Scada {
   private lamps = new Map<string, HTMLElement>();
   private evList!: HTMLElement;
   private evCount = -1;
-  private trendCanvas!: HTMLCanvasElement;
+  private warnBar!: HTMLElement;
+  private warnCount!: HTMLElement;
+  private panes: TrendPane[] = [];
   private hist: Record<string, number[]> = {};
   private histT: number[] = [];
   private lastSample = -1;
@@ -172,7 +351,7 @@ export class Scada {
   onRun: () => void = () => {};
 
   constructor(private plant: Plant) {
-    for (const tr of TRENDS) this.hist[tr.key] = [];
+    for (const tr of ALL_TRENDS) this.hist[tr.key] = [];
     this.build();
     document.body.append(this.root);
   }
@@ -218,10 +397,12 @@ export class Scada {
     this.grid.append(
       this.screen('01', 'PROCESS MIMIC', this.mimic()),
       this.screen('02', 'SETPOINTS', this.setpoints()),
-      this.screen('03', 'ANNUNCIATOR', this.annunciator()),
-      this.screen('04', 'TRENDS &middot; LAST 6 h', this.trends()),
+      this.screen('03', 'TRENDS &middot; INVENTORY &middot; 6 h', this.trends(LEVEL_TRENDS)),
+      this.screen('04', 'TRENDS &middot; PROCESS &middot; 6 h', this.trends(PROCESS_TRENDS)),
     );
-    w.append(this.grid, this.tray);
+    // The banner goes above the grid, not in it: it is one screen the width of
+    // two, mounted high on the wall where it sits at the top of your vision.
+    w.append(this.warnings(), this.grid, this.tray);
     this.relayout();
     return w;
   }
@@ -280,8 +461,8 @@ export class Scada {
     this.grid.style.gridTemplateColumns = shown <= 1 ? '1fr' : '1fr 1fr';
     this.grid.style.display = shown === 0 ? 'none' : '';
     this.tray.style.display = this.pills.some((p) => p.style.display !== 'none') ? '' : 'none';
-    // the trend canvas is sized from its box, which has just changed
-    requestAnimationFrame(() => this.resizeTrend());
+    // the trend canvases are sized from their boxes, which have just changed
+    requestAnimationFrame(() => this.resizeTrends());
   }
 
   // ---- 01 mimic ------------------------------------------------------------
@@ -436,29 +617,58 @@ export class Scada {
     }
   }
 
-  // ---- 03 annunciator ------------------------------------------------------
+  // ---- 00 warnings ---------------------------------------------------------
 
-  private annunciator() {
-    const wrap = el('div', 'sc-body sc-ann');
+  /**
+   * The alarm banner. Wide, shallow, and above the working screens, which is
+   * where every real control room puts one - you read the screens with your
+   * eyes down, catch the banner flashing at the top of your vision, and have
+   * to lift your head to find out what it is. Collapsed it keeps flashing,
+   * because a banner you can silence by folding it away is worse than none.
+   */
+  private warnings() {
+    const bar = el('div', 'sc-warnbar');
+    this.warnBar = bar;
+
+    const h = el('div', 'sc-head');
+    h.append(el('b', undefined, '00'), el('span', undefined, 'WARNINGS'));
+    this.warnCount = el('em', 'sc-wcount', 'ALL CLEAR');
+    h.append(this.warnCount);
+
+    const btns = el('div', 'sc-winbtns');
+    const mini = el('button', 'sc-wb min');
+    mini.title = 'Fold the banner away';
+    mini.onclick = () => {
+      bar.classList.toggle('mini');
+      requestAnimationFrame(() => this.resizeTrends());
+    };
+    btns.append(mini);
+    h.append(btns);
+
+    const body = el('div', 'sc-wbody');
     const grid = el('div', 'sc-lamps');
     for (const l of LAMPS) {
       const t = el('div', 'sc-lamp', l.text);
       grid.append(t);
       this.lamps.set(l.id, t);
     }
-    wrap.append(grid);
-    wrap.append(el('div', 'sc-sect', 'Event log'));
+    const log = el('div', 'sc-wlog');
+    log.append(el('div', 'sc-sect', 'Event log'));
     this.evList = el('div', 'sc-events');
-    wrap.append(this.evList);
-    return wrap;
+    log.append(this.evList);
+    body.append(grid, log);
+
+    bar.append(h, body);
+    return bar;
   }
 
-  // ---- 04 trends -----------------------------------------------------------
+  // ---- 03 / 04 trends ------------------------------------------------------
 
-  private trends() {
+  private trends(specs: TrendSpec[]) {
     const wrap = el('div', 'sc-body sc-trend');
-    this.trendCanvas = el('canvas');
-    wrap.append(this.trendCanvas);
+    const pane = new TrendPane(specs);
+    this.panes.push(pane);
+    wrap.append(pane.canvas);
     return wrap;
   }
 
@@ -485,15 +695,7 @@ export class Scada {
     });
     d.append(sp);
 
-    this.siloBtn = el('button');
-    this.siloBtn.textContent = 'Order binder';
-    this.siloBtn.onclick = () => this.plant.refillSilo();
-    d.append(this.siloBtn);
-
-    this.mediaBtn = el('button');
-    this.mediaBtn.textContent = 'Order media';
-    this.mediaBtn.onclick = () => this.plant.orderMedia();
-    d.append(this.mediaBtn);
+    d.append(this.phone());
 
     this.flushBtn = el('button', 'warn');
     this.flushBtn.textContent = 'Flush line';
@@ -512,13 +714,31 @@ export class Scada {
     return d;
   }
 
+  /**
+   * The desk phone. Consumables do not appear because you wished for them:
+   * somebody has to ring the supplier, and from the chair that is you. Same
+   * two orders as the side console, but you do not have to leave the room to
+   * place them - and the handset lights up when a bin is getting low.
+   */
+  private phone() {
+    const p = el('div', 'sc-phone');
+    p.append(el('i', 'sc-ph-icon'), el('span', 'sc-ph-lab', 'SITE<br>SUPPLY'));
+
+    this.siloBtn = el('button', 'sc-ph-btn');
+    this.siloBtn.onclick = () => this.plant.refillSilo();
+    this.mediaBtn = el('button', 'sc-ph-btn');
+    this.mediaBtn.onclick = () => this.plant.orderMedia();
+    p.append(this.siloBtn, this.mediaBtn);
+    return p;
+  }
+
   // ------------------------------------------------------------------ opening
 
   show() {
     this.open = true;
     this.root.classList.add('on');
     this.syncSliders();
-    this.resizeTrend();
+    this.resizeTrends();
     this.setLookOffset(0, 0);
   }
 
@@ -535,7 +755,14 @@ export class Scada {
     const t = px === 0 && py === 0
       ? 'none'
       : 'translate3d(' + px.toFixed(1) + 'px,' + py.toFixed(1) + 'px,0)';
-    for (const e of this.moving) e.style.transform = t;
+    // Turn far enough and the wall is genuinely behind your shoulder. Hide it
+    // rather than leave the compositor pushing a screen-sized layer around
+    // somewhere off to the side.
+    const gone = Math.abs(px) > innerWidth * 1.15 || Math.abs(py) > innerHeight * 1.3;
+    for (const e of this.moving) {
+      e.style.transform = t;
+      e.style.visibility = gone ? 'hidden' : '';
+    }
   }
 
   hide() {
@@ -543,15 +770,8 @@ export class Scada {
     this.root.classList.remove('on');
   }
 
-  private resizeTrend() {
-    const c = this.trendCanvas;
-    const r = c.parentElement!.getBoundingClientRect();
-    if (r.width < 2 || r.height < 2) return;   // minimised, or not laid out yet
-    const dpr = Math.min(devicePixelRatio, 2);
-    c.width = Math.round(r.width * dpr);
-    c.height = Math.round(r.height * dpr);
-    c.style.width = r.width + 'px';
-    c.style.height = r.height + 'px';
+  private resizeTrends() {
+    for (const p of this.panes) p.resize();
   }
 
   // ------------------------------------------------------------------- update
@@ -563,7 +783,7 @@ export class Scada {
       + (speed === 0 ? 'HELD' : 'RUNNING ' + speed + '×') + '</em>';
 
     this.mimicTiles(t);
-    this.annunciatorTick(t);
+    this.warningsTick(t);
     this.trendTick(t);
     this.deskTick(t, speed);
 
@@ -663,15 +883,27 @@ export class Scada {
       t.stope.pct > 1 && t.stope.avgUcs < DESIGN.targetUcs ? 'warn' : 'ok');
   }
 
-  private annunciatorTick(t: Telemetry) {
+  private warningsTick(t: Telemetry) {
     const st = this.plant.standing;
+    let warn = 0, trip = 0;
     for (const l of LAMPS) {
       const on = l.id === '@plug' ? t.pipe.plugged
         : l.id === '@starve' ? t.pump.starved
         : st.has(l.id);
+      if (on && l.level === 'trip') trip++;
+      else if (on && l.level === 'warn') warn++;
       const tile = this.lamps.get(l.id)!;
       tile.className = 'sc-lamp' + (on ? ' on ' + l.level : '');
     }
+
+    // The header carries the count, because folded away it is all you see -
+    // and it has to be enough to make you unfold it.
+    this.warnCount.textContent = trip
+      ? trip + ' TRIP' + (trip > 1 ? 'S' : '') + (warn ? ' · ' + warn + ' WARNING' + (warn > 1 ? 'S' : '') : '')
+      : warn ? warn + ' WARNING' + (warn > 1 ? 'S' : '')
+      : 'ALL CLEAR';
+    this.warnBar.classList.toggle('trip', trip > 0);
+    this.warnBar.classList.toggle('warn', trip === 0 && warn > 0);
 
     if (t.alarms.length !== this.evCount) {
       this.evCount = t.alarms.length;
@@ -689,91 +921,21 @@ export class Scada {
 
   private trendTick(t: Telemetry) {
     // sample on shift time, so fast-forward fills the trace at the right pace
-    if (this.lastSample < 0 || t.time - this.lastSample > 40 || t.time < this.lastSample) {
+    if (this.lastSample < 0 || t.time - this.lastSample > SAMPLE_EVERY
+      || t.time < this.lastSample) {
       if (t.time < this.lastSample) {           // the shift was reset
         this.histT.length = 0;
-        for (const tr of TRENDS) this.hist[tr.key].length = 0;
+        for (const tr of ALL_TRENDS) this.hist[tr.key].length = 0;
       }
       this.lastSample = t.time;
       this.histT.push(t.time);
-      for (const tr of TRENDS) this.hist[tr.key].push(tr.pick(t));
+      for (const tr of ALL_TRENDS) this.hist[tr.key].push(tr.pick(t));
       if (this.histT.length > SAMPLES) {
         this.histT.shift();
-        for (const tr of TRENDS) this.hist[tr.key].shift();
+        for (const tr of ALL_TRENDS) this.hist[tr.key].shift();
       }
     }
-    this.drawTrends();
-  }
-
-  private drawTrends() {
-    const c = this.trendCanvas;
-    const r = c.parentElement!.getBoundingClientRect();
-    if (r.width < 2 || r.height < 2) return;
-    if (Math.abs(r.width - parseFloat(c.style.width || '0')) > 2
-      || Math.abs(r.height - parseFloat(c.style.height || '0')) > 2) this.resizeTrend();
-    const g = c.getContext('2d')!;
-    const dpr = Math.min(devicePixelRatio, 2);
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const W = c.width / dpr, H = c.height / dpr;
-    g.clearRect(0, 0, W, H);
-
-    const n = TRENDS.length;
-    const padL = 42, padR = 8, gap = 7;
-    const h = (H - gap * (n - 1)) / n;
-
-    TRENDS.forEach((tr, i) => {
-      const y0 = i * (h + gap);
-      g.fillStyle = 'rgba(255,255,255,0.025)';
-      g.fillRect(padL, y0, W - padL - padR, h);
-
-      const data = this.hist[tr.key];
-      const span = Math.max(tr.max - tr.min, 1e-6);
-      const yAt = (v: number) => y0 + h - ((v - tr.min) / span) * h;
-
-      if (tr.ref !== undefined && tr.ref <= tr.max) {
-        g.strokeStyle = 'rgba(255,255,255,0.22)';
-        g.setLineDash([4, 4]);
-        g.beginPath();
-        g.moveTo(padL, yAt(tr.ref));
-        g.lineTo(W - padR, yAt(tr.ref));
-        g.stroke();
-        g.setLineDash([]);
-      }
-
-      if (data.length > 1) {
-        g.strokeStyle = tr.colour;
-        g.lineWidth = 1.6;
-        g.beginPath();
-        for (let k = 0; k < data.length; k++) {
-          const x = padL + ((W - padL - padR) * k) / (SAMPLES - 1);
-          const y = yAt(Math.max(tr.min, Math.min(tr.max, data[k])));
-          if (k === 0) g.moveTo(x, y);
-          else g.lineTo(x, y);
-        }
-        g.stroke();
-
-        g.fillStyle = tr.colour;
-        const last = data[data.length - 1];
-        const lx = padL + ((W - padL - padR) * (data.length - 1)) / (SAMPLES - 1);
-        g.beginPath();
-        g.arc(lx, yAt(Math.max(tr.min, Math.min(tr.max, last))), 2.4, 0, 7);
-        g.fill();
-        g.font = '600 12px ui-monospace, monospace';
-        g.textAlign = 'right';
-        g.fillText(f(last, last < 20 ? 2 : 0), W - padR - 5, y0 + 14);
-      }
-
-      // name inside the plot, scale in the gutter, so nothing collides
-      g.fillStyle = '#8b9bb0';
-      g.font = '10px ui-monospace, monospace';
-      g.textAlign = 'left';
-      g.fillText(tr.label + '   ' + tr.unit, padL + 6, y0 + 13);
-      g.fillStyle = '#54627a';
-      g.font = '9px ui-monospace, monospace';
-      g.textAlign = 'right';
-      g.fillText(String(tr.max), padL - 5, y0 + 9);
-      g.fillText(String(tr.min), padL - 5, y0 + h - 2);
-    });
+    for (const p of this.panes) p.draw(this.hist, t.upstream.hard);
   }
 
   private deskTick(t: Telemetry, speed: number) {
@@ -782,12 +944,17 @@ export class Scada {
     this.runBtn.textContent = plugged ? '⚠  FLUSH THE LINE'
       : this.plant.sp.running ? '■  STOP PLANT' : '▶  START PLANT';
     this.flushBtn.disabled = !plugged;
-    this.siloBtn.disabled = t.silo.pct > 97;
-    this.siloBtn.classList.toggle('warn', t.silo.pct < 12);
-    this.mediaBtn.disabled = !t.upstream.hard || t.media.pct > 97;
-    this.mediaBtn.classList.toggle('warn', t.upstream.hard && t.media.pct < 20);
-    this.mediaBtn.textContent = t.upstream.hard
-      ? 'Order media · ' + f(t.media.pct) + '%' : 'Order media';
+
+    const call = (b: HTMLButtonElement, name: string, pct: number, low: number, live: boolean) => {
+      b.innerHTML = name + '<b>' + (live ? f(pct) + '%' : '—') + '</b>';
+      b.disabled = !live || pct > 97;
+      b.classList.toggle('warn', live && pct < low);
+    };
+    call(this.siloBtn, 'Binder', t.silo.pct, 12, true);
+    call(this.mediaBtn, 'Balls', t.media.pct, 20, t.upstream.hard);
+    // the handset itself lights up, so you notice from across the room
+    this.siloBtn.parentElement!.classList.toggle('ring',
+      t.silo.pct < 12 || (t.upstream.hard && t.media.pct < 20));
 
     [0, 1, 10, 60, 240].forEach((v, i) =>
       this.speedBtns[i].classList.toggle('on', v === speed));

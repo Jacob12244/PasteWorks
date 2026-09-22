@@ -59,12 +59,16 @@ const SEAT_FOV = 60;
 const SITE_FOV = 46;
 
 /**
- * How far you can turn your head. You are in a chair, not walking about, so
- * the range is generous enough to look along the window and down at the desk
- * and no further - which also keeps the physical controls on the desk from
- * ever leaving the screen.
+ * How far you can turn your head. Far enough to put either end wall of the
+ * room square in front of you - the posters, the noticeboard, the sad plant -
+ * and to look up at the warnings banner or down at your own desk.
+ *
+ * The hard stop is 90 deg and not negotiable: the overlay is placed with
+ * tan(yaw), which is how it stays pixel-sharp, and tan blows up at a right
+ * angle. 1.30 rad is 74.5 deg, which leaves the geometry comfortable and the
+ * video wall well off the side of the screen by the time you get there.
  */
-const LOOK = { yaw: 0.52, up: 0.30, down: 0.34 };
+const LOOK = { yaw: 1.30, up: 0.40, down: 0.42 };
 
 let seatedYaw = 0;
 let seatedPitch = CONTROL.pitch;
@@ -288,17 +292,13 @@ function frame() {
 
 frame();
 
-// open on a slow orbit so the plant introduces itself
-let intro = 0;
-const introSpin = setInterval(() => {
-  if (++intro > 60 || world.selected) { clearInterval(introSpin); return; }
-  stage.controls.autoRotate = true;
-  stage.controls.autoRotateSpeed = 0.35;
-}, 50);
-canvas.addEventListener('pointerdown', () => {
-  stage.controls.autoRotate = false;
-  clearInterval(introSpin);
-}, { once: true });
+// Open where an operator opens: in the chair, on the hard circuit. The flight
+// into the room doubles as the establishing shot, and `Esc` is right there on
+// the lintel for anyone who would rather look at the plant itself.
+// Seat first: sitting sets scada.open, which is what stops the mode change
+// below from flying the camera out to the site overview behind our backs.
+sitDown(true);
+hud.setHard(true);
 
 // Handy from the browser console: PW.plant.sp, PW.stage.camera, PW.world.units
 (window as any).PW = {

@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%230b111b%22%2F%3E%3Cpath%20d%3D%22M11%208h10l4%2014H7z%22%20fill%3D%22%23c08f52%22%2F%3E%3Cpath%20d%3D%22M5%2025h22%22%20stroke%3D%22%2335e0d0%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>PasteWorks — Cemented Paste Backfill Plant</title>
 <style>
   :root {
@@ -228,7 +229,10 @@
   #scada { position: fixed; inset: 0; display: none; }
   #scada.on {
     display: grid;
-    grid-template-rows: 30vh minmax(0, 1fr) auto;
+    grid-template-rows: 26vh minmax(0, 1fr) auto;
+    /* turn far enough and the wall translates clean off the side of the
+       viewport; it must not become something the page can scroll to */
+    overflow: hidden;
     cursor: grab;
     /* a look-around drag must never start selecting the labels it passes over */
     user-select: none; -webkit-user-select: none;
@@ -272,7 +276,7 @@
   .sc-wall {
     position: relative; z-index: 1;
     display: flex; flex-direction: column; min-height: 0; gap: 9px;
-    padding: 14px 6vw 10px;
+    padding: 12px 4vw 10px;
     will-change: transform;
   }
   .sc-grid {
@@ -375,16 +379,45 @@
   .sc-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 2px 0 4px; }
   .sc-toggles button { padding: 5px 4px; font-size: 10px; }
 
-  /* 03 annunciator */
-  /* The lamp box keeps its size; the event log takes whatever is left and
-     scrolls, rather than being squeezed down to a single line. */
-  .sc-ann { display: flex; flex-direction: column; overflow: hidden; }
-  .sc-lamps {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px;
+  /* 00 the warnings banner */
+  /* One screen the width of two, mounted above the working screens. Shallow
+     on purpose: it is read with a glance upward, not stared at. */
+  .sc-warnbar {
     flex: 0 0 auto;
+    display: flex; flex-direction: column;
+    background: rgba(7,12,18,.94);
+    border: 1px solid rgba(53,224,208,.26);
+    border-radius: 7px;
+    box-shadow:
+      0 0 0 5px #0a0e15,
+      0 0 0 6px rgba(120,140,165,.16),
+      0 14px 34px rgba(0,0,0,.7),
+      inset 0 0 70px rgba(53,224,208,.045);
   }
-  .sc-ann .sc-sect { flex: 0 0 auto; margin: 7px 0 3px; }
-  .sc-events { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .sc-warnbar.warn { border-color: rgba(255,171,61,.5); }
+  .sc-warnbar.trip { border-color: rgba(255,90,60,.7); }
+  .sc-warnbar .sc-head { font-size: 10px; }
+  .sc-wcount {
+    margin-left: auto; font-style: normal; font-family: var(--mono);
+    font-size: 10.5px; letter-spacing: .14em; color: #54627a;
+  }
+  .sc-warnbar.warn .sc-wcount { color: var(--amber); }
+  .sc-warnbar.trip .sc-wcount {
+    color: var(--red); font-weight: 700;
+    animation: blink .6s steps(1) infinite;
+  }
+  /* sc-wcount already took the auto margin; keep the button beside it */
+  .sc-warnbar .sc-winbtns { margin-left: 12px; }
+  .sc-wbody { display: flex; gap: 14px; padding: 7px 10px 9px; min-height: 0; }
+  .sc-warnbar.mini .sc-wbody { display: none; }
+  .sc-lamps {
+    flex: 1 1 auto; align-content: start;
+    display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 3px;
+  }
+  .sc-wlog { flex: 0 0 290px; display: flex; flex-direction: column; min-height: 0; }
+  .sc-wlog .sc-sect { flex: 0 0 auto; margin: 0 0 4px; }
+  .sc-events { flex: 1 1 auto; min-height: 0; max-height: 72px; overflow-y: auto; }
   .sc-events::-webkit-scrollbar { width: 6px; }
   .sc-events::-webkit-scrollbar-thumb { background: #22303f; border-radius: 3px; }
   .sc-lamp {
@@ -427,6 +460,43 @@
   }
   .sc-desk button { padding: 8px 12px; }
   .sc-desk .run, .sc-desk .stop { font-size: 12px; min-width: 168px; }
+
+  /* the phone: how consumables actually get ordered from the chair */
+  .sc-phone {
+    display: flex; align-items: stretch; gap: 6px;
+    padding: 4px 6px 4px 9px; border-radius: 7px;
+    background: rgba(255,255,255,.035);
+    border: 1px solid rgba(139,155,176,.2);
+  }
+  .sc-phone.ring { border-color: var(--amber); background: rgba(255,171,61,.09); }
+  /* a handset drawn from two borders, so it does not depend on a font glyph */
+  .sc-ph-icon {
+    position: relative; flex: 0 0 17px; width: 17px; height: 15px;
+    align-self: center; color: #6d7c90;
+  }
+  .sc-phone.ring .sc-ph-icon { color: var(--amber); animation: blink .5s steps(1) infinite; }
+  .sc-ph-icon::before {
+    content: ''; position: absolute; left: 0; right: 0; top: 1px; height: 6px;
+    border: 2px solid currentColor; border-bottom: 0; border-radius: 8px 8px 0 0;
+  }
+  .sc-ph-icon::after {
+    content: ''; position: absolute; left: 1px; right: 1px; top: 9px; height: 3px;
+    background: currentColor; border-radius: 2px; transform: rotate(-16deg);
+  }
+  .sc-ph-lab {
+    align-self: center; font-size: 7.5px; line-height: 1.2;
+    letter-spacing: .13em; color: #54627a;
+  }
+  .sc-desk .sc-ph-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    padding: 3px 10px; min-width: 66px;
+    font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase;
+  }
+  .sc-desk .sc-ph-btn b {
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: 0;
+    color: var(--txt); text-transform: none;
+  }
+  .sc-desk .sc-ph-btn:disabled b { color: inherit; }
   .sc-speeds { display: flex; gap: 4px; }
   .sc-speeds button { min-width: 46px; }
   .sc-strip { margin-left: auto; display: flex; gap: 8px; }
@@ -447,8 +517,13 @@
   }
 
   @media (max-height: 760px) {
-    #scada.on { grid-template-rows: 20vh minmax(0, 1fr) auto; }
-    .sc-lamp { font-size: 8px; min-height: 26px; padding: 4px; }
+    #scada.on { grid-template-rows: 19vh minmax(0, 1fr) auto; }
+    .sc-lamp { font-size: 8px; min-height: 24px; padding: 3px; }
+    .sc-events { max-height: 52px; }
+  }
+  @media (max-width: 1240px) {
+    .sc-wlog { display: none; }
+    .sc-lamps { grid-template-columns: repeat(8, minmax(0, 1fr)); }
   }
 </style>
 </head>

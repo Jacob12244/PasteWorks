@@ -511,7 +511,10 @@ export class Plant {
       'Underflow surge tank low - the press is out-running the thickener',
       'Underflow surge tank recovered');
 
-    if (sp.cycleTime > 0) {
+    // A press with nothing to filter does not keep shuttling its plates. Stop
+    // the plant and the pack holds wherever the cycle had got to, which is
+    // also what you come back to when you start it again.
+    if (run && sp.cycleTime > 0) {
       this.cyclePhase = (this.cyclePhase + dt / (sp.cycleTime * 60)) % 1;
     }
     const pressing = this.cyclePhase < 0.78;

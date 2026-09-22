@@ -206,10 +206,6 @@ export class HUD {
     };
     upToggles.append(this.binderBtn);
 
-    this.mediaBtn = el('button');
-    this.mediaBtn.style.gridColumn = '1 / -1';
-    this.mediaBtn.onclick = () => this.plant.orderMedia();
-    upToggles.append(this.mediaBtn);
     this.upSection.append(upToggles);
     b.append(this.upSection);
 
@@ -217,14 +213,21 @@ export class HUD {
     b.append(el('div', 'sect', 'Backfill plant<em>thickener to stope</em>'));
     for (const s of SLIDERS) b.append(this.slider(s));
 
+    // Both deliveries together. They are the same job - ring the supplier -
+    // and splitting them across two sections of the console was why running
+    // out of balls kept coming as a surprise.
     const act = el('div', 'actions');
     this.siloBtn = el('button');
-    this.siloBtn.textContent = 'Order binder';
     this.siloBtn.onclick = () => this.plant.refillSilo();
     act.append(this.siloBtn);
 
+    this.mediaBtn = el('button');
+    this.mediaBtn.onclick = () => this.plant.orderMedia();
+    act.append(this.mediaBtn);
+
     this.flushBtn = el('button', 'warn');
     this.flushBtn.textContent = 'Flush line';
+    this.flushBtn.style.gridColumn = '1 / -1';
     this.flushBtn.onclick = () => this.plant.clearBlockage();
     act.append(this.flushBtn);
 
@@ -382,8 +385,17 @@ export class HUD {
     this.runBtn.textContent = plugged ? '⚠  FLUSH THE LINE'
       : this.plant.sp.running ? '■  STOP PLANT' : '▶  START PLANT';
     this.flushBtn.disabled = !plugged;
+
+    // ---- deliveries, both in one place
+    this.siloBtn.textContent = 'Order binder  ·  silo ' + f(t.silo.pct, 0) + '%';
     this.siloBtn.disabled = t.silo.pct > 97;
     this.siloBtn.classList.toggle('warn', t.silo.pct < 12);
+    const hard = this.plant.hardMode;
+    this.mediaBtn.textContent = hard
+      ? 'Order balls  ·  hopper ' + f(t.media.pct, 0) + '%'
+      : 'Order balls  ·  standard mode';
+    this.mediaBtn.disabled = !hard || t.media.pct > 97;
+    this.mediaBtn.classList.toggle('warn', hard && t.media.pct < 20);
 
     // ---- upstream toggles
     const up = this.plant.up;
@@ -391,10 +403,6 @@ export class HUD {
     this.deslimeBtn.classList.toggle('on', up.deslime);
     this.binderBtn.textContent = up.binderType === 'slag' ? 'Binder: slag blend' : 'Binder: OPC';
     this.binderBtn.classList.toggle('on', up.binderType === 'slag');
-    this.mediaBtn.textContent = 'Order grinding media  ·  ball hopper '
-      + f(t.media.pct, 0) + '%';
-    this.mediaBtn.disabled = t.media.pct > 97;
-    this.mediaBtn.classList.toggle('warn', t.media.pct < 20);
     this.ctls.get('cyclonePressure')!.style.opacity = up.deslime ? '1' : '0.35';
     this.ctls.get('frother')!.classList.toggle('flag',
       t.upstream.sulphide > 0.9 && up.binderType === 'opc');

@@ -8,9 +8,9 @@ paste 1,200 m down a borehole into a stope, without plugging the line.
 
 It looks like a factory game. Underneath, every number is the engineering.
 
-There is a control room on the pad. Sit down at it and you get four SCADA
-screens — mimic, setpoints, annunciator, trends — with the plant still running
-out of the window behind them.
+It opens in the control room, on the hard circuit. Four SCADA screens, a
+warnings banner above them, sixteen trends, and the plant still running out of
+the window behind the glass.
 
 ---
 
@@ -262,16 +262,18 @@ fence, not a worse plant.
 
 ## The control room
 
-Click the hut on the pad — or press **C** — and you sit down at the desk.
-The camera goes *inside* the building, at eye height in the chair, looking out
-through the real glass at the plant. **Drag to look around**: the camera turns
-and never moves, the way your head does when you are sitting down.
+This is where the app opens. You can leave any time with `Esc`, and get back
+by clicking the hut on the pad or pressing **C**. The camera is *inside* the
+building, at eye height in the chair, looking out through the real glass.
+**Drag to look around**: the camera turns and never moves, the way your head
+does when you are sitting down.
 
 ```
   ┌──────────── glass ────────────┐   the plant, still running, out the window
+  │ 00  W A R N I N G S           │   double width, above the working screens
   │  01 MIMIC      │  02 SETPOINTS │
-  │  03 ANNUNCIATOR│  04 TRENDS    │
-  └──────────── desk ─────────────┘   start/stop, speed, deliveries, pilot lamps
+  │  03 INVENTORY  │  04 PROCESS   │
+  └──────────── desk ─────────────┘   start/stop, speed, the phone, pilot lamps
 ```
 
 Every screen has a **minimise** and a **maximise** button. Maximise one and it
@@ -279,16 +281,52 @@ fills the wall — the mimic in particular is worth blowing up. Minimise drops i
 to a pill on the desk edge; clear all four and you are simply sitting at a
 window watching the plant run.
 
+- **00 Warnings** — 24 lamps and the event log, in a banner the width of the
+  whole wall and mounted above the working screens. That is where a real alarm
+  banner goes, and for the reason you would expect: you read the screens with
+  your eyes down, catch it flashing at the top of your vision, and have to lift
+  your head to find out what it is. Fold it away and the header keeps flashing
+  and keeps the count, because a banner you can silence by folding it is worse
+  than no banner at all.
 - **01 Mimic** — the whole flowsheet as tiles, every one carrying its live
   numbers, outlined amber or red when a condition stands against it.
 - **02 Setpoints** — the same nine loops as the side console, tagged the way
   they would be on a real mimic (WIC-101, DIC-320, QIC-610…). They *are* the
   same setpoints: both screens build from one spec list and write straight into
   the plant, so moving one moves the other.
-- **03 Annunciator** — a 24-lamp box. Standing conditions flash amber or red at
-  different rates the way a real annunciator does, with the event log beneath.
-- **04 Trends** — UCS, discharge pressure, placement rate and process water
-  level over the last six shift-hours, with the design limits dashed across.
+- **03 Inventory** — eight trends of everything that fills or empties: surge
+  tank, process water, thickener bed, filter cake bin, binder silo, ball
+  hopper, the stope, and the running spill total.
+- **04 Process** — eight trends of what you hold a setpoint against: UCS,
+  discharge pressure, placement rate, slump, paste solids, line velocity, rake
+  torque and cost of fill.
+
+Sixteen traces over six shift-hours, drawn as small multiples rather than a
+stack of strips — at eight traces to a screen a full-width strip is thirty
+pixels tall and tells you nothing, where a card twice as tall and half as wide
+still has a readable shape and room for the number.
+
+### The phone
+
+Consumables do not appear because you wished for them: somebody has to ring the
+supplier, and from the chair that is you. The desk phone orders **binder** and
+**balls**, the same two deliveries as the side console, and the handset lights
+up when either is getting low. There is a real one on the desk beside it, and
+its message lamp blinks at the same time.
+
+### The rest of the room
+
+Turn far enough and you are looking at an end wall rather than the video wall,
+which is the point of being able to turn at all. There is a sign counting the
+hours since the last plug — wired to the blockage counter, and the most honest
+instrument in the building — a motivational poster, a laminated thing somebody
+printed years ago about adding more water, the shift board, a hi-vis on its
+hook, a kettle on the filing cabinet, the traffic cone the shift board
+complains about, and a pot plant that did not survive commissioning.
+
+The look is clamped at 74.5°, and that is not a taste decision. The overlay is
+placed with `tan(yaw)`, which is what keeps it pixel-sharp, and `tan` blows up
+at a right angle.
 
 ### Why the screens move when you turn your head
 
@@ -321,7 +359,8 @@ npm run typecheck
 npm run verify     # the four physics harnesses, outside the browser
 ```
 
-**Controls** — drag to orbit, scroll to zoom, click any unit to inspect it.
+**Controls** — it opens seated in the control room in hard mode; `Esc` leaves
+the desk. Outside, drag to orbit, scroll to zoom, click any unit to inspect it.
 `Space` run/stop, `1`–`5` time compression (pause → 240×), `O`/`P`/`U` for the
 overview, plant and stope views, `G` for the grinding circuit, `C` for the
 control room, `H` to toggle hard mode, `Esc` to deselect or to leave the desk.
@@ -393,11 +432,12 @@ src/
     upstream.ts    ball mill, flotation bank, deslime cyclone cluster
     terrain.ts     ground, rock block model, borehole, stope
     world.ts       site layout and interconnecting pipework
+    room.ts        what is on the control room walls, and the phone
     scene.ts       renderer, IBL, lighting, bloom
   ui/
     setpoints.ts   the nine loops, described once, shared by both consoles
     hud.ts         side console, alarm log, per-unit inspector
-    scada.ts       the control room: mimic, annunciator, trends, video wall
+    scada.ts       the control room: warnings, mimic, trends, video wall
 ```
 
 A few things worth knowing if you pick it up:
@@ -411,9 +451,17 @@ A few things worth knowing if you pick it up:
 - **The ground plane has a hole punched in it** over the section, otherwise it
   quietly roofs over the stope.
 - **Alarms latch.** They log once when a condition comes in and once when it
-  clears, the way an annunciator does — not on every scan. The control room
-  annunciator then reads the standing set directly, so the lamps and the log
-  can never disagree.
+  clears, the way an annunciator does — not on every scan. The warnings banner
+  then reads the standing set directly, so the lamps and the log can never
+  disagree.
+- **The scene blooms anything over 0.72 luminance**, so a poster printed on
+  white paper and lit by the room light is a white rectangle with a halo. Every
+  light surface in the control room is printed on card instead, around 0.70
+  sRGB, with the emissive turned right down.
+- **Canvases must be sized from the content box.** `getBoundingClientRect`
+  includes the padding; a canvas sized from it sits inside the padding and
+  overhangs its panel by exactly that much — which is the last column of
+  numbers, sliced off.
 - **Overlay panels must not fight over grid rows.** The inspector and the side
   console started life in rows 3 and 2 of the same CSS grid, so opening the
   inspector silently stole the console's height. Spanning the console across
@@ -442,7 +490,7 @@ paste pipeline transport, thickening and filtration, and backfill systems.
    bank works a froth into its launders, and the cyclone cluster lights up when
    it is in circuit. Bypass the deslime and watch every number downstream get
    worse at once.
-5. Still in hard mode, press **C** and sit in the control room. Run it at 240×
-   from there and do *not* order grinding media. The ball hopper empties around
-   hour 33, nothing trips, and you can watch the UCS trace bend downwards on
-   screen 04 while the mimic's P80 climbs.
+5. Back in the control room, run it at 240× and do *not* pick up the phone. The
+   ball hopper empties around hour 33, nothing trips, and you can watch the
+   hopper trace hit the floor on screen 03 while the UCS bends down on 04 and
+   the mimic's P80 climbs.
