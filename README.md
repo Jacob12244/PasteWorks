@@ -332,10 +332,11 @@ In the control room, drag to look around — you turn but never move.
 
 PasteWorks is a static bundle that runs entirely in the browser — no API, no
 database, **no sign-in**. So it is the simplest stack on the box: one nginx
-container on `127.0.0.1:8460`, with the host nginx proxying
+container on `127.0.0.1:8480`, with the host nginx proxying
 `https://pasteworks.minesmart.cloud` to it and certbot terminating TLS. Same
-shape as the other apps there (assetpro 8410, pidpro 8420, pipelinepro 8430,
-portal 8440, processpro 8450), minus everything those need and this does not.
+shape as the other apps there, each of which owns a decade of loopback ports —
+assetpro 8410, pidpro 8420, pipelinepro 8430, portal 8440, processpro 8450,
+Keycloak 8460, bowtie 8470 — minus everything those need and this does not.
 
 Nothing is provisioned in the `Identity` repo. No Keycloak client, no audience
 scope, no group. Anyone with the link opens it, which is the point.

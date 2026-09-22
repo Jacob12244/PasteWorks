@@ -7,10 +7,12 @@ name: pasteworks-prod
 # people, so anyone with the link should be able to open it. That is why there
 # is no Keycloak client and no reference to id.minesmart.cloud anywhere here.
 #
-# It publishes to 127.0.0.1:8460 only; the server's host nginx reverse-proxies
+# It publishes to 127.0.0.1:8480 only; the server's host nginx reverse-proxies
 # https://pasteworks.minesmart.cloud to it and terminates TLS. Same pattern as
 # the rest of the box: assetpro 8410-8413, pidpro 8420-8422, pipelinepro
-# 8430-8431, portal 8440-8441, processpro 8450-8451.
+# 8430-8431, portal 8440-8441, processpro 8450-8451, Keycloak 8460, bowtie
+# 8470-8471. 8460 is NOT free despite looking like the next slot - it is
+# Keycloak, and it answers a probe with a JSON error instead of refusing.
 
 services:
   # Images are BUILT OFF-SERVER and pushed to ghcr.io; the server only pulls.
@@ -24,7 +26,7 @@ services:
     image: ghcr.io/jacob12244/pasteworks-web:${IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8460:80"
+      - "127.0.0.1:8480:80"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 30s

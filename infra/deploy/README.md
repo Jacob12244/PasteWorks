@@ -2,17 +2,34 @@
 
 This is the simplest stack on the box. PasteWorks is a **static bundle that
 runs entirely in the browser** — no API, no database, no sign-in. One nginx
-container serves it, publishing to **`127.0.0.1:8460`** only; the server's
+container serves it, publishing to **`127.0.0.1:8480`** only; the server's
 existing host nginx reverse-proxies `https://pasteworks.minesmart.cloud` to it
-and terminates TLS through certbot. Same pattern as `assetpro` (8410-8413),
-`pidpro` (8420-8422), `pipelinepro` (8430-8431), the portal (8440-8441) and
-`processpro` (8450-8451).
+and terminates TLS through certbot. Same pattern as everything else there.
+Each app owns a decade of loopback ports:
+
+| Port      | App                                              |
+| --------- | ------------------------------------------------ |
+| 8410-8413 | `assetpro`                                       |
+| 8420-8422 | `pidpro`                                         |
+| 8430-8431 | `pipelinepro`                                    |
+| 8440-8441 | the portal                                       |
+| 8450-8451 | `processpro`                                     |
+| 8460      | **Keycloak** — `Identity`, `id.minesmart.cloud`  |
+| 8470-8471 | `bowtie`                                         |
+| **8480**  | **`pasteworks`** — this one                      |
+
+8460 looks like the next free slot and is not. Worse, it answers a health
+probe with a plausible JSON error (`Unable to find matching target resource
+method`, which is RESTEasy underneath Keycloak) rather than refusing the
+connection, so a careless check reads as "something is up, near enough". Run
+`sudo ss -ltnp | grep 84` and claim a port from what is actually bound, not
+from the pattern.
 
 ```
   Browser --HTTPS--> host nginx (:443, certbot TLS)
                        |  server_name pasteworks.minesmart.cloud
                        |
-                 127.0.0.1:8460
+                 127.0.0.1:8480
                        web
               (nginx static bundle :80)
 ```
@@ -28,7 +45,7 @@ out and it needs the full `processpro` treatment instead.
 
 - Docker Engine and the Compose plugin, already present on this server.
 - **DNS**: `pasteworks.minesmart.cloud` resolving to this server.
-- The loopback port **8460** free.
+- The loopback port **8480** free.
 
 ## 2. Get the code
 
@@ -66,7 +83,7 @@ docker login ghcr.io -u Jacob12244
 docker compose pull
 docker compose up -d
 docker compose ps
-curl -sS http://127.0.0.1:8460/healthz     # -> ok
+curl -sS http://127.0.0.1:8480/healthz     # -> ok
 ```
 
 ## 4. Publish it through the host nginx

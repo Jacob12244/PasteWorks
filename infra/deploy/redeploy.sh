@@ -33,9 +33,9 @@ fi
 echo "==> docker compose up -d --remove-orphans"
 docker compose up -d --remove-orphans
 
-echo "==> waiting for web (127.0.0.1:8460/healthz)"
+echo "==> waiting for web (127.0.0.1:8480/healthz)"
 for i in $(seq 1 15); do
-  if curl -fsS http://127.0.0.1:8460/healthz >/dev/null 2>&1; then
+  if curl -fsS http://127.0.0.1:8480/healthz >/dev/null 2>&1; then
     echo "    web healthy"
     break
   fi
