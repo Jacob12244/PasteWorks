@@ -352,14 +352,14 @@ scope, no group. Anyone with the link opens it, which is the point.
 ```
 
 Full instructions are in [infra/deploy/README.md](infra/deploy/README.md). The
-short version, once the repo exists on GitHub and DNS points at the box:
+short version, once DNS points at the box:
 
 ```powershell
 cd infra\deploy; .\build-push.ps1          # on a workstation
 ```
 
 ```bash
-cd /home/ben && git clone <repo> pasteworks   # first time only
+cd /home/ben && git clone https://github.com/Jacob12244/PasteWorks.git pasteworks
 cd pasteworks/infra/deploy && docker compose pull && docker compose up -d
 sudo cp nginx/pasteworks.minesmart.cloud.conf /etc/nginx/sites-available/
 sudo ln -s /etc/nginx/sites-available/pasteworks.minesmart.cloud.conf /etc/nginx/sites-enabled/
