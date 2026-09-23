@@ -577,6 +577,7 @@ export class PlatePress extends Unit {
     for (let i = 0; i < 14; i++) {
       const s = box(0.5, 0.16, 1.4, matte(C.cake, 0.95));
       s.visible = false;
+      s.userData.noCollide = true;
       this.slabs.push(s);
       this.slabVel.push(0);
       g.add(s);
@@ -800,6 +801,8 @@ export class CakeBin extends Unit {
     for (let i = 0; i < 18; i++) {
       const lump = box(0.42, 0.22, 0.5, matte(C.cake, 0.95));
       lump.position.set(-span / 2 + (span * i) / 18, 0.58, (Math.random() - 0.5) * 0.7);
+      // they ride the belt, so nothing may stand on where they started
+      lump.userData.noCollide = true;
       this.lumps.push(lump);
       conv.add(lump);
     }

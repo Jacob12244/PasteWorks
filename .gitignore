@@ -10,3 +10,4 @@ infra/deploy/.env
 
 # Working screenshots from tools/shots.mjs and tools/story.mjs
 .shots/
+server/dist/

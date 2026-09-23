@@ -65,3 +65,40 @@ PW.scada.update(PW.plant.telemetry, 60);    // force a SCADA repaint
 
 Note that `shot.mjs` screenshots ~2.5 s after running the script, so anything
 that needs sim time must be stepped synchronously rather than left to run.
+
+## Paste Wars
+
+```
+npm run bake                      # the arena's collision world -> server/worlds/arena.bin.gz (dev server up)
+npm run verify:arena              # the map against the bake, then the server against bots
+node tools/arenapage.mjs out      # two browsers in the room (dev server and npm run arena up)
+```
+
+- `bake.mjs` — opens `?arena=bake`, which builds the arena exactly as a
+  player's page does and clips its collision world to the fence, and writes
+  the triangles out for the server with their fingerprint in `arena.json`.
+  Re-bake after changing anything on the pad: a prop, a spawn's surroundings,
+  a unit in the plant. A page whose plant no longer matches says so in the
+  console when it joins.
+- `arenamap.ts` — every spawn is open standing room with floor under it and
+  inside the fence; every pickup lies on something, with somewhere to stand
+  within reach of it. Catches a prop dropped on a spawn, and a cake put under
+  a table.
+- `arena.mjs` — starts its own server on a spare port and plays it with
+  scripted bots over real sockets: join, round start, a hit, a tag and a
+  respawn, a lump stopped by a container, a hopper run dry and refilled on
+  cake, a teleport refused, junk and a flood shown the door, the sixteenth
+  player turned away, and a second server's per-address cap.
+- `arenapage.mjs` — two headless browsers join the running room, see each
+  other, and one pastes the other; screenshots from both sides. A browser
+  each, because a second tab is a background tab, a background tab stops
+  animating, and the room reads that as idling.
+
+In the arena the page exposes `window.PW = { stage, world, walker, avatars, lumps, hud, grid, hash, plant, vm, pickups, THREE, conn, me, ammo, round, roster, fire, setWeapon, practise }`:
+
+```js
+PW.walker.paused = false; PW.walker.onPause(false);   // headless: no pointer lock to wait for
+PW.walker.moveTo(new PW.THREE.Vector3(x, 0.05, z));    // small steps - the room refuses a teleport
+PW.fire(0);                                            // paste, where the camera looks
+PW.practise('why');                                    // drop the server, play in the page
+```

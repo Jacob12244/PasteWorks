@@ -16,6 +16,10 @@ explaining how things got this way, then sits you in the control room: four
 SCADA screens, a warnings banner above them, sixteen trends, and the plant
 still running out of the window behind the glass.
 
+And after the shift, [`/?arena`](#paste-wars) turns the pad into **Paste Wars**:
+splat tag on the running plant for up to fifteen people, with paste guns,
+rocks, and filter cake off the floor to reload.
+
 ---
 
 ## Five worlds
@@ -508,17 +512,118 @@ someone steps out, since most people never do:
 `node tools/walk.mjs` walks every world headlessly — out of the door, a jump,
 and all the way up the tower stair.
 
+## Paste Wars
+
+After the shift, the plant gets used for something else. **`/?arena`** opens
+Paste Wars: splat tag on the backfill plant, up to fifteen people at once in
+one shared room, first person, no sign-in. It has its own strip on the title
+screen, under the five worlds, with a live count of who is on shift.
+
+The arena is the plant itself: the thickener, surge tank, filter press, cake
+bin, binder silos, mixing tower and paste pumps all stand where they always
+do, and all keep running through the fight — the rake turns, the press drops
+cake, the lines flow. A site fence goes round the pad, and the two open yards
+either side of the plant are dressed with what a real site leaves lying
+about: containers (a crib room you can run through, and a pair with a crate
+staircase up onto the roof), bulk bags of binder, jersey barriers, cable
+drums, pipe spools, and stockpiles of filter cake off the press.
+
+- **Paste gun** (click, hold for more): fast, a little arc, 16 a hit, six a
+  second. The hopper on top has a sight glass, and it empties as you fire.
+- **Rocks** (right click): slow and loopy, 45 a hit, one every 0.65 s.
+- **Hard hats count** — a hit on the head is half as much again.
+- **Nothing is free.** You start a life with 30 paste and 3 rocks. **Filter
+  cake** lying on the stockpiles and round the yards fills the paste gun, 20 at
+  a time; **rock piles** give three rocks. Walk over them. They come back 12–15
+  s after someone takes them. There is no ammo on top of the mixing tower,
+  which is the only thing stopping it being a sniper's nest.
+- 100 health, coming back after five seconds out of trouble; 2 s of spawn
+  shield (gone the moment you throw); 4 s on the floor when you are plastered,
+  with the camera lifting off to look at whoever did it. A hit of paste gums
+  your boots up for a second.
+- **Rounds** are five minutes and start once two are on shift. Each one draws
+  its conditions: Earth, then **Psyche gravity** — the walker's own low-g feel,
+  a jump of nearly five metres, and every lump flying flat — and back again.
+  Twelve seconds of scoreboard between rounds, and a name for whoever took the
+  shift.
+- **Names are handed out**, never typed: *Fitter 14*, *Shift Boss 3*,
+  *Crib Cook 71*, with a hard hat in one of fifteen colours. There is no chat.
+  Nothing anyone types ever reaches anyone else, so there is nothing to
+  moderate.
+
+```
+  mouse          look                 click         paste gun
+  W A S D        move                 right click   throw a rock
+  Shift          run                  1 2 Q wheel   swap
+  Space          jump                 Tab           scores
+  Esc            let go of the mouse  M             sound
+```
+
+With no server to be found — `npm run dev` without `npm run arena`, or the
+arena container down — the page says so and runs a room of its own, in the
+page, on the same code: practice plays by exactly the rules the real thing
+does. If the room is full it does the same, and keeps asking the server until
+a slot comes up.
+
+### How the room works
+
+The whole game is one transport-free class, `src/arena/shared/room.ts`. The
+arena server wraps it in WebSockets; the practice room wraps it in a loopback
+that still goes through JSON both ways. What each end owns:
+
+- **Movement belongs to the page.** Every player runs the same walker as
+  *Walking the plant* and reports where it got to twenty times a second. The
+  room checks nobody is moving faster than their legs allow — a leaky
+  distance budget, not a per-message speed, so a burst of reports held up in a
+  queue does not read as a teleport — and sends back a `fix` when they are.
+- **Everything that decides a fight belongs to the room**: ammo, every lump in
+  the air, every hit, health, respawns, pickups and the round clock. A throw is
+  a direction; the room flies the lump at 60 Hz against the collision world
+  and the players' capsules, and says where it ended.
+- **Both ends fly lumps with the same physics** (`shared/physics.ts`) against
+  the **same triangles**. The server has no renderer and cannot build the
+  plant, so `npm run bake` builds the arena in a headless browser, clips the
+  collision world to the fence, and writes the triangles out
+  (`server/worlds/arena.bin.gz`, 85,000 triangles, 0.6 MB). The page builds its
+  own from the same meshes, and both fingerprint it to the centimetre — a
+  page whose plant does not match the server's bake says so in the console.
+  A lump you see splat on a girder splatted on that girder on the server.
+- **Your own throws fly the moment you let go**, on your clock, drawn from the
+  muzzle and easing onto the true path. Everyone else is drawn 110 ms in the
+  past from the server's snapshots, so there is always a pair to blend
+  between — and their throws are flown on that same delayed clock, so a lump
+  leaves someone's hands when you see them throw it, and splats on you when
+  the server said it did. Slow lumps hide latency far better than hitscan
+  would, which is why there is no lag compensation and no need for it.
+- **Anyone with the link can connect**, so the door is where the limits are:
+  an origin check, six sockets and twenty joins a minute per address, 2 kB
+  messages, a token bucket of sixty messages a second, a kick for junk, a
+  ping for dead sockets, and three minutes stood still before your slot goes
+  to someone else. A dropped connection holds its slot for twenty seconds, so
+  a refresh gets you the same name, hat and score back.
+
+`npm run verify:arena` checks the map against the bake (every spawn is open
+standing room; every pickup lies on something you can stand over), then
+plays the server with scripted bots over real sockets — join, round start, a
+hit, a tag and a respawn, a lump stopped by a container, a hopper run dry and
+refilled on cake, a teleport refused, junk, a flood, the sixteenth player
+turned away, and the per-address cap. `node tools/arenapage.mjs` puts two
+headless browsers in the room and has one paste the other.
+
 ## Running it
 
 ```bash
 npm install
 npm run dev        # http://localhost:5180
+npm run arena      # the Paste Wars server on :8481 - the dev server proxies /play to it
 ```
 
 ```bash
 npm run build      # static bundle in dist/
 npm run typecheck
 npm run verify     # the five physics harnesses, outside the browser
+npm run bake       # re-bake the arena's collision world after changing anything on the pad
+npm run verify:arena
 ```
 
 **Controls** — pick a world, watch or skip the opening, and it sits you in the
@@ -533,23 +638,27 @@ In the control room, drag to look around — you turn but never move.
 
 ## Putting it on the server
 
-PasteWorks is a static bundle that runs entirely in the browser — no API, no
-database, **no sign-in**. So it is the simplest stack on the box: one nginx
-container on `127.0.0.1:8480`, with the host nginx proxying
-`https://pasteworks.minesmart.cloud` to it and certbot terminating TLS. Same
-shape as the other apps there, each of which owns a decade of loopback ports —
-assetpro 8410, pidpro 8420, pipelinepro 8430, portal 8440, processpro 8450,
-Keycloak 8460, bowtie 8470 — minus everything those need and this does not.
+PasteWorks is a static bundle that runs entirely in the browser, plus one
+small WebSocket server for Paste Wars — no API, no database, **no sign-in**.
+So it is the simplest stack on the box: an nginx container on
+`127.0.0.1:8480` and the arena on `127.0.0.1:8481`, with the host nginx
+proxying `https://pasteworks.minesmart.cloud` to the first and `/play` to
+the second, and certbot terminating TLS. Same shape as the other apps there,
+each of which owns a decade of loopback ports — assetpro 8410, pidpro 8420,
+pipelinepro 8430, portal 8440, processpro 8450, Keycloak 8460, bowtie 8470 —
+minus everything those need and this does not. The arena keeps one game in
+memory and nothing else: no accounts, no volume, nothing to back up.
 
 Nothing is provisioned in the `Identity` repo. No Keycloak client, no audience
 scope, no group. Anyone with the link opens it, which is the point.
 
 ```
   infra/deploy/
-    docker-compose.yml                       one service, one port
+    docker-compose.yml                       web and arena, a port each
     web/Dockerfile                           node build -> nginx runtime
     web/nginx.conf                           gzip, immutable assets, /healthz
-    nginx/pasteworks.minesmart.cloud.conf    the host vhost
+    arena/Dockerfile                         node build -> one bundled file and the bake
+    nginx/pasteworks.minesmart.cloud.conf    the host vhost, with the /play WebSocket
     build-push.ps1                           build on a workstation, push to ghcr
     redeploy.sh                              pull and restart on the server
     README.md                                the walkthrough
@@ -573,6 +682,11 @@ sudo certbot --nginx -d pasteworks.minesmart.cloud
 
 After that, `./redeploy.sh` is the whole update cycle. There is no `.env` to
 fill in and nothing to back up.
+
+Already running a PasteWorks from before Paste Wars? `./redeploy.sh` brings
+the arena container up on its own; the one hand step is adding the `/play`
+location to the live host vhost — see *Adding Paste Wars to a running server*
+in the deploy README.
 
 ## How it is built
 
@@ -607,7 +721,19 @@ src/
     world.ts       site layout and interconnecting pipework, per flowsheet
     room.ts        what is on the control room walls, world by world, and the phone
     scene.ts       renderer, IBL, per-world lighting, bloom
-    walk.ts        on foot: the collision grid, the capsule, how each world feels
+    walk.ts        on foot: the collision world, the capsule
+    grid.ts        the triangle grid: capsule and segment tests, no DOM, shared with the server
+    feel.ts        how being on foot feels in each world
+  arena/           Paste Wars (only loaded for ?arena)
+    shared/        rules, map, protocol, physics and the room itself - page and server alike
+    arena.ts       the mode: boot, the line to the room, throwing, the frame loop
+    props.ts       containers, crib room, bags, barriers, cake stockpiles, fence, pickups
+    avatars.ts     everyone else, in hi-vis, drawn from snapshots
+    lumps.ts       everything in the air, and the splats
+    viewmodel.ts   the paste gun in your hands, with its sight glass
+    hud.ts         health, ammo, round clock, feed, scoreboard, pause card
+    net.ts         the socket, and the practice room when there is no socket
+    sound.ts       every noise, synthesised
   ui/
     welcome.ts     the title screen
     cutscene.ts    the opening: letterbox, typed text, cuts, objective card
@@ -615,6 +741,12 @@ src/
     setpoints.ts   the loops, described once, shared by both consoles
     hud.ts         side console, alarm log, per-unit inspector
     scada.ts       the control room: warnings, mimic, trends, video wall
+```
+
+```
+server/
+  main.ts          the arena server: /play, /healthz, /play/status, and the limits
+  worlds/          the baked collision world the room plays against
 ```
 
 **A world is data.** A scenario file overrides the plant's design constants,
@@ -652,6 +784,14 @@ A few things worth knowing if you pick it up:
   includes the padding; a canvas sized from it sits inside the padding and
   overhangs its panel by exactly that much — which is the last column of
   numbers, sliced off.
+- **A background tab stops animating.** Headless tests that open two pages
+  in one browser find the first one idle-kicked: its `requestAnimationFrame`
+  stopped the moment the second took focus, and with it the position reports.
+  Give each player a browser of its own.
+- **The first visit to `?arena` under `npm run dev` reloads once.** Vite only
+  finds the arena's imports (the post-processing passes) when the chunk
+  loads, pre-bundles them, and reloads the page — which rejoins under the same
+  name. It does not happen in a build.
 - **Overlay panels must not fight over grid rows.** The inspector and the side
   console started life in rows 3 and 2 of the same CSS grid, so opening the
   inspector silently stole the console's height. Spanning the console across

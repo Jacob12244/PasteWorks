@@ -6,3 +6,6 @@
 Dockerfile      text eol=lf
 docker-compose.yml text eol=lf
 .dockerignore   text eol=lf
+
+# The baked arena collision world. Binary, and a line-ending "fix" would wreck it.
+*.gz            binary

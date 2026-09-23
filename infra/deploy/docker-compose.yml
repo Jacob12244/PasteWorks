@@ -2,23 +2,30 @@ name: pasteworks-prod
 
 # Single-host production stack for PasteWorks.
 #
-# One container. The app is a static bundle that runs entirely in the browser:
-# no API, no database, and deliberately NO sign-in - it is a thing to show
-# people, so anyone with the link should be able to open it. That is why there
-# is no Keycloak client and no reference to id.minesmart.cloud anywhere here.
+# Two containers, and deliberately NO sign-in in either - PasteWorks is a
+# thing to show people, so anyone with the link should be able to open it.
+# That is why there is no Keycloak client and no reference to
+# id.minesmart.cloud anywhere here.
 #
-# It publishes to 127.0.0.1:8480 only; the server's host nginx reverse-proxies
-# https://pasteworks.minesmart.cloud to it and terminates TLS. Same pattern as
-# the rest of the box: assetpro 8410-8413, pidpro 8420-8422, pipelinepro
-# 8430-8431, portal 8440-8441, processpro 8450-8451, Keycloak 8460, bowtie
-# 8470-8471. 8460 is NOT free despite looking like the next slot - it is
-# Keycloak, and it answers a probe with a JSON error instead of refusing.
+#   web     the static bundle: the plant, the five worlds, all of it in the browser
+#   arena   the Paste Wars room: a WebSocket server holding one fifteen-player
+#           game in memory. It keeps nothing - no database, no volume, no
+#           accounts, no names anyone typed - so a restart empties the room
+#           and that is all there is to lose.
+#
+# Both publish to 127.0.0.1 only; the server's host nginx reverse-proxies
+# https://pasteworks.minesmart.cloud to web, and /play to arena, and
+# terminates TLS. Same pattern as the rest of the box: assetpro 8410-8413,
+# pidpro 8420-8422, pipelinepro 8430-8431, portal 8440-8441, processpro
+# 8450-8451, Keycloak 8460, bowtie 8470-8471. 8460 is NOT free despite looking
+# like the next slot - it is Keycloak, and it answers a probe with a JSON
+# error instead of refusing.
 
 services:
   # Images are BUILT OFF-SERVER and pushed to ghcr.io; the server only pulls.
   # Building here pegs the shared-CPU VPS hard enough to trip abuse detection,
-  # so use infra/deploy/build-push.ps1 from a workstation. The build: section
-  # stays for emergencies (docker compose build web).
+  # so use infra/deploy/build-push.ps1 from a workstation. The build: sections
+  # stay for emergencies (docker compose build web arena).
   web:
     build:
       context: ../..
@@ -29,6 +36,32 @@ services:
       - "127.0.0.1:8480:80"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  arena:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/arena/Dockerfile
+    image: ghcr.io/jacob12244/pasteworks-arena:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8481:8481"
+    environment:
+      # the only page allowed to open a socket; scripts that send no Origin
+      # still get in, and meet the same limits as everyone else
+      ALLOWED_ORIGINS: https://pasteworks.minesmart.cloud
+      # sockets from one address, and joins from one address a minute
+      PER_IP: "6"
+      JOINS_PER_MIN: "20"
+    # one room of fifteen is a few MB and a few percent of a core; the caps
+    # are there so a bad day for the arena is never a bad day for the box
+    read_only: true
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8481/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

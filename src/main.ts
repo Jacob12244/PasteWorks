@@ -21,7 +21,10 @@ const canvas = document.getElementById('view') as HTMLCanvasElement;
 const params = new URLSearchParams(location.search);
 const direct = scenarioById(params.get('s'));
 
-if (direct) {
+// Paste Wars is a page of its own, loaded only by the people who ask for it.
+if (params.has('arena')) {
+  import('./arena/arena').then((m) => m.startArena(params.get('arena') === 'bake' ? 'bake' : 'play'));
+} else if (direct) {
   start(direct, params.get('intro') !== '0');
 } else {
   new Welcome(SCENARIOS, (s, intro) => {

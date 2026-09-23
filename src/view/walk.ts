@@ -1,7 +1,9 @@
 import * as THREE from 'three';
-import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { Capsule } from 'three/examples/jsm/math/Capsule.js';
-import type { WorldKind } from '../scenario/types';
+import { TriangleGrid } from './grid';
+import { FEEL, type Feel } from './feel';
+
+export { TriangleGrid, FEEL, type Feel };
 
 /**
  * First person: walk the plant.
@@ -16,47 +18,6 @@ import type { WorldKind } from '../scenario/types';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 
-/** How walking feels in each world. */
-export interface Feel {
-  /** m/s², once your feet leave the floor */
-  gravity: number;
-  walk: number;
-  run: number;
-  /** take-off speed, m/s */
-  jump: number;
-  /** how quickly you reach the speed you are asking for, on the floor and off it */
-  grip: number;
-  airGrip: number;
-  /** said once, when you step out */
-  note: string;
-}
-
-export const FEEL: Record<WorldKind, Feel> = {
-  earth: {
-    gravity: 20, walk: 4.2, run: 8, jump: 6.2, grip: 12, airGrip: 1.5,
-    note: 'Hi-vis on. Stay behind the handrails.',
-  },
-  city: {
-    gravity: 20, walk: 4.2, run: 8, jump: 6.2, grip: 10, airGrip: 1.5,
-    note: 'Mind the puddles. And the drones.',
-  },
-  waste: {
-    gravity: 20, walk: 4.0, run: 7.5, jump: 6.2, grip: 11, airGrip: 1.5,
-    note: 'Nobody has walked here in a very long time.',
-  },
-  // a hardsuit at 440 bar: slow, heavy, and every jump a long float down
-  ocean: {
-    gravity: 4.5, walk: 2.4, run: 3.6, jump: 3.4, grip: 4, airGrip: 0.8,
-    note: 'Hardsuit on. 440 bar outside it - take it slowly.',
-  },
-  // Mag boots hold you to the iron while you walk. Jump and they let go, and
-  // Psyche barely pulls you back - 0.144 m/s² is not much of an argument.
-  space: {
-    gravity: 1.2, walk: 3.4, run: 5.5, jump: 3.4, grip: 9, airGrip: 0.3,
-    note: 'Mag boots on. Jump, and find out how little Psyche pulls.',
-  },
-};
-
 /** capsule radius, height, and eye height above the feet */
 const R = 0.35, H = 1.8, EYE = 1.62;
 /** the pull that keeps you on stairs and ramps on the way down */
@@ -64,107 +25,6 @@ const STICK = 4;
 /** the highest kerb you walk up without jumping */
 const STEP_UP = 0.45;
 const STEPS = 5;
-
-/**
- * The triangles a walker can touch, bucketed into a uniform grid.
- *
- * three's Octree does the same job, but building one takes seconds on a plant
- * this size, and this has to be built the moment someone steps outside. A
- * grid is one pass: every triangle goes into the cells its bounding box
- * covers. The few that would cover dozens of cells - the ground, the pad, a
- * tank wall - go on a short list of their own and are checked by bounding
- * box instead. The capsule test itself is three's, borrowed from an empty
- * Octree.
- */
-export class TriangleGrid {
-  private static readonly S = 1.5;
-  private cells = new Map<number, number[]>();
-  private tris: THREE.Triangle[] = [];
-  private big: number[] = [];
-  private bigBox: THREE.Box3[] = [];
-  private seen = new Uint32Array(0);
-  private mark = 0;
-  private test = new Octree();
-  private _c = new Capsule();
-  private _box = new THREE.Box3();
-  private _list: number[] = [];
-
-  private key(x: number, y: number, z: number) {
-    return ((x + 2048) * 4096 + (y + 2048)) * 4096 + (z + 2048);
-  }
-
-  get size() { return this.tris.length; }
-
-  add(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) {
-    const i = this.tris.length;
-    this.tris.push(new THREE.Triangle(a.clone(), b.clone(), c.clone()));
-    const S = TriangleGrid.S;
-    const x0 = Math.floor(Math.min(a.x, b.x, c.x) / S), x1 = Math.floor(Math.max(a.x, b.x, c.x) / S);
-    const y0 = Math.floor(Math.min(a.y, b.y, c.y) / S), y1 = Math.floor(Math.max(a.y, b.y, c.y) / S);
-    const z0 = Math.floor(Math.min(a.z, b.z, c.z) / S), z1 = Math.floor(Math.max(a.z, b.z, c.z) / S);
-    if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > 48) {
-      this.big.push(i);
-      this.bigBox.push(new THREE.Box3().setFromPoints([a, b, c]));
-      return;
-    }
-    for (let x = x0; x <= x1; x++) {
-      for (let y = y0; y <= y1; y++) {
-        for (let z = z0; z <= z1; z++) {
-          const k = this.key(x, y, z);
-          const cell = this.cells.get(k);
-          if (cell) cell.push(i); else this.cells.set(k, [i]);
-        }
-      }
-    }
-  }
-
-  finish() {
-    this.seen = new Uint32Array(this.tris.length);
-  }
-
-  /** Same contract as Octree.capsuleIntersect: the push out, or false. */
-  capsuleIntersect(capsule: Capsule): { normal: THREE.Vector3; depth: number } | false {
-    // Capsule.copy returns nothing, whatever its typings say
-    const cap = this._c;
-    cap.copy(capsule);
-    const r = cap.radius;
-    const box = this._box.makeEmpty().expandByPoint(cap.start).expandByPoint(cap.end).expandByScalar(r + 0.05);
-    const S = TriangleGrid.S;
-    const list = this._list;
-    list.length = 0;
-    if (++this.mark === 0xffffffff) { this.seen.fill(0); this.mark = 1; }
-    for (let x = Math.floor(box.min.x / S); x <= Math.floor(box.max.x / S); x++) {
-      for (let y = Math.floor(box.min.y / S); y <= Math.floor(box.max.y / S); y++) {
-        for (let z = Math.floor(box.min.z / S); z <= Math.floor(box.max.z / S); z++) {
-          const cell = this.cells.get(this.key(x, y, z));
-          if (!cell) continue;
-          for (const i of cell) {
-            if (this.seen[i] === this.mark) continue;
-            this.seen[i] = this.mark;
-            list.push(i);
-          }
-        }
-      }
-    }
-    for (let j = 0; j < this.big.length; j++) {
-      if (this.bigBox[j].intersectsBox(box)) list.push(this.big[j]);
-    }
-
-    let hit = false;
-    for (const i of list) {
-      const res = this.test.triangleCapsuleIntersect(cap, this.tris[i]);
-      if (res) {
-        hit = true;
-        cap.translate(res.normal.multiplyScalar(res.depth));
-      }
-    }
-    if (!hit) return false;
-    const push = cap.getCenter(V()).sub(capsule.getCenter(V()));
-    const depth = push.length();
-    if (depth < 1e-9) return false;
-    return { normal: push.normalize(), depth };
-  }
-}
 
 /**
  * Everything a walker can bump into, as world-space triangles in a grid.
@@ -175,9 +35,10 @@ export class TriangleGrid {
  * big, and the invisible ramps laid over stair treads. Instanced meshes are
  * out unless they are marked solid, because most of them are fish. Bolts and
  * lamps are too small to matter, and anything out of reach overhead is left
- * out too.
+ * out too. With a clip box, only what reaches into it is kept - the arena
+ * wants the fenced pad and nothing past it.
  */
-export function collisionWorld(root: THREE.Object3D): TriangleGrid {
+export function collisionWorld(root: THREE.Object3D, clip?: THREE.Box3): TriangleGrid {
   const grid = new TriangleGrid();
   root.updateWorldMatrix(true, true);
   const a = V(), b = V(), c = V();
@@ -193,6 +54,11 @@ export function collisionWorld(root: THREE.Object3D): TriangleGrid {
       a.fromBufferAttribute(pos, idx ? idx.getX(i) : i).applyMatrix4(world);
       b.fromBufferAttribute(pos, idx ? idx.getX(i + 1) : i + 1).applyMatrix4(world);
       c.fromBufferAttribute(pos, idx ? idx.getX(i + 2) : i + 2).applyMatrix4(world);
+      if (clip && (
+        Math.max(a.x, b.x, c.x) < clip.min.x || Math.min(a.x, b.x, c.x) > clip.max.x
+        || Math.max(a.y, b.y, c.y) < clip.min.y || Math.min(a.y, b.y, c.y) > clip.max.y
+        || Math.max(a.z, b.z, c.z) < clip.min.z || Math.min(a.z, b.z, c.z) > clip.max.z
+      )) continue;
       grid.add(a, b, c);
     }
   };
@@ -208,8 +74,9 @@ export function collisionWorld(root: THREE.Object3D): TriangleGrid {
     if (!geo.boundingSphere) geo.computeBoundingSphere();
     sphere.copy(geo.boundingSphere!).applyMatrix4(mesh.matrixWorld);
     if (!forced && (sphere.radius > 250 || sphere.radius < 0.2 || sphere.center.y - sphere.radius > 15)) return;
-
     const inst = mesh as THREE.InstancedMesh;
+    // an instanced mesh's own bounds say nothing about where its copies are
+    if (clip && !inst.isInstancedMesh && !clip.intersectsSphere(sphere)) return;
     if (inst.isInstancedMesh) {
       if (!mesh.userData.solid) return;
       for (let i = 0; i < inst.count; i++) {
@@ -247,6 +114,11 @@ export class Walker {
   private spawnYaw = 0;
   private bob = 0;
   private _t = V();
+
+  /** a fence you cannot cross, in plan: the arena keeps everyone on the pad */
+  bounds: { x0: number; x1: number; z0: number; z1: number } | null = null;
+  /** how much of your speed you have - less, with paste on your boots */
+  speedScale = 1;
 
   onPause: (paused: boolean) => void = () => {};
 
@@ -287,6 +159,37 @@ export class Walker {
     const t0 = performance.now();
     this.world = collisionWorld(root);
     return { triangles: this.world.size, ms: performance.now() - t0 };
+  }
+
+  /** Walk on a collision world someone else has already built. */
+  useWorld(grid: TriangleGrid) {
+    this.world = grid;
+  }
+
+  /** Change how it feels underfoot - the arena swaps gravity between rounds. */
+  setFeel(feel: Feel) {
+    this.feel = feel;
+  }
+
+  get yawAngle() { return this.yaw; }
+  get pitchAngle() { return this.pitch; }
+  get velocity() { return this.vel; }
+  get grounded() { return this.onFloor; }
+  /** where your feet are */
+  get feet() { return V(this.cap.start.x, this.cap.start.y - R, this.cap.start.z); }
+
+  /** Put your feet here without turning you round - a correction, not a respawn. */
+  moveTo(at: THREE.Vector3) {
+    this.cap.start.set(at.x, at.y + R, at.z);
+    this.cap.end.set(at.x, at.y + H - R, at.z);
+    this.vel.set(0, 0, 0);
+  }
+
+  /** Put you somewhere, facing some way, standing still. */
+  teleport(at: THREE.Vector3, yaw: number) {
+    this.spawnAt.copy(at);
+    this.spawnYaw = yaw;
+    this.respawn();
   }
 
   enter(at: THREE.Vector3, yaw: number) {
@@ -357,7 +260,7 @@ export class Walker {
     const f = this.feel;
     const k = this.keys;
     const run = k.has('ShiftLeft') || k.has('ShiftRight');
-    const speed = run ? f.run : f.walk;
+    const speed = (run ? f.run : f.walk) * this.speedScale;
 
     let ix = 0, iz = 0;
     if (k.has('KeyW') || k.has('ArrowUp')) iz -= 1;
@@ -398,6 +301,7 @@ export class Walker {
     const want = Math.hypot(this.vel.x, this.vel.z) * h;
     const got = Math.hypot(this.cap.start.x - from.start.x, this.cap.start.z - from.start.z);
     if (grounded && this.vel.y <= 0 && want > 1e-4 && got < want * 0.5) this.stepUp(from, h);
+    this.fence();
   }
 
   /**
@@ -414,6 +318,18 @@ export class Walker {
       this.vel.addScaledVector(hit.normal, -hit.normal.dot(this.vel));
       this.cap.translate(hit.normal.multiplyScalar(hit.depth));
     }
+  }
+
+  /** Hold the capsule inside the bounds, and stop dead against them. */
+  private fence() {
+    const b = this.bounds;
+    if (!b) return;
+    const x = this.cap.start.x, z = this.cap.start.z;
+    const cx = Math.max(b.x0 + R, Math.min(b.x1 - R, x));
+    const cz = Math.max(b.z0 + R, Math.min(b.z1 - R, z));
+    if (cx !== x) this.vel.x = 0;
+    if (cz !== z) this.vel.z = 0;
+    if (cx !== x || cz !== z) this.cap.translate(this._t.set(cx - x, 0, cz - z));
   }
 
   private _from = new Capsule(V(), V(), R);

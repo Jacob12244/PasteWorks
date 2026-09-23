@@ -443,11 +443,16 @@ export class World {
   private underground: Underground | null = null;
   private dressing: Dressing | null = null;
   private rovs: THREE.Object3D[] = [];
-  private deliveries: Deliveries;
+  private deliveries: Deliveries | null = null;
   private clock = 0;
   selected: Unit | null = null;
 
-  constructor(private stage: Stage, readonly scenario: Scenario) {
+  /**
+   * The arena builds the same plant with nobody else on site: no figures
+   * standing about for scale (they look like players), and no deliveries
+   * driving through the middle of it.
+   */
+  constructor(private stage: Stage, readonly scenario: Scenario, private opts: { arena?: boolean } = {}) {
     const look = scenario.look;
     stage.applyLook(look);
     const sh = sheet();
@@ -545,7 +550,7 @@ export class World {
       : w === 'space' || w === 'waste' ? silo.clone().add(V(9, 0, -8)) : silo.clone();
     const mediaAt = sh.source === 'scoop' ? V(-44, 0, -13)
       : w === 'space' ? V(UP.millX + 8, 0, -20) : V(UP.millX + 8, 0, -8);
-    this.deliveries = new Deliveries(this.root, w, binderAt, mediaAt);
+    if (!opts.arena) this.deliveries = new Deliveries(this.root, w, binderAt, mediaAt);
     this.buildSiteDressing(look.world);
     this.root.add(this.fx.group);
 
@@ -725,7 +730,7 @@ export class World {
       [-44, 12, 0], [-14, 9.5, 6.1], [4.5, 6.5, 0], [22, 3.0, 7.1], [-18, 20, 0],
     ] as const;
     spots.forEach(([x, z, y], i) => {
-      if (kind === 'waste') return;
+      if (kind === 'waste' || this.opts.arena) return;
       const p = kind === 'ocean' ? rov() : scaleFigure(z > 8 ? C.amber : C.lime);
       p.position.set(x, kind === 'ocean' ? 4 + i * 1.7 : y, z);
       p.rotation.y = (i * 2.3) % 6;
@@ -772,7 +777,7 @@ export class World {
     for (const u of this.units) u.update(t, dt, this.fx);
     this.fx.update(dt);
     this.dressing?.update(t, dt, this.clock);
-    this.deliveries.update(t, dt, this.clock);
+    this.deliveries?.update(t, dt, this.clock);
     this.rovs.forEach((r, i) => {
       r.position.y = 4 + i * 1.7 + Math.sin(this.clock * 0.7 + i) * 0.5;
       r.rotation.y += dt * 0.08 * (i % 2 ? 1 : -1);

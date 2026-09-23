@@ -161,6 +161,7 @@ export class Welcome {
     const row = el('div', 'wl-cards');
     for (const s of scenarios) row.append(this.card(s));
     this.root.append(row);
+    this.root.append(this.arena());
 
     const foot = el('footer');
     const intro = el('label', 'wl-intro');
@@ -201,6 +202,40 @@ export class Welcome {
     c.append(body);
     c.onclick = () => this.pick(s);
     return c;
+  }
+
+  /**
+   * Paste Wars, under the worlds: a strip rather than a sixth card, because it
+   * is not a sixth place to run the plant - it is what happens on this one
+   * after the shift. Says how many are on shift, if the arena answers.
+   */
+  private arena() {
+    const a = el('a', 'wl-arena') as HTMLAnchorElement;
+    a.href = '?arena';
+    a.innerHTML = `
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <path d="M20 6c3 0 4 5 7 5s5-3 7 0-2 5 0 8 4 5 1 7-5-1-6 2 0 7-4 7-4-4-7-4-6 4-8 1 2-5-1-7-6-1-5-4 5-3 5-6-3-6 0-8 5 2 7 0 2-8 4-8z" fill="#c08f52"/>
+        <circle cx="33" cy="7" r="2" fill="#c08f52"/><circle cx="6" cy="31" r="1.6" fill="#c08f52"/>
+      </svg>
+      <span class="wa-name"><em>After the shift</em><b>PASTE WARS</b></span>
+      <span class="wa-text">Splat tag on the running plant, up to fifteen at once. Paste gun, rocks,
+        and filter cake off the floor to reload. Keyboard and mouse.</span>
+      <span class="wa-count"></span>
+      <span class="wa-go">Clock on&nbsp;&nbsp;&#9656;</span>`;
+    const count = a.querySelector('.wa-count') as HTMLElement;
+    fetch('/play/status', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s: { online: number; max: number } | null) => {
+        if (s) count.textContent = `${s.online} / ${s.max} on shift`;
+      })
+      .catch(() => { /* no arena server: the page will practise on its own */ });
+    a.onclick = (e) => {
+      e.preventDefault();
+      this.root.classList.add('leaving');
+      this.running = false;
+      setTimeout(() => { location.href = a.href; }, 420);
+    };
+    return a;
   }
 
   private pick(s: Scenario) {

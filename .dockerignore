@@ -8,3 +8,6 @@ dist
 .git
 *.png
 tools
+
+# a local server build would otherwise be copied in over the fresh one
+server/dist
