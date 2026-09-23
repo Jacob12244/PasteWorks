@@ -4,311 +4,382 @@ import { Stage } from './view/scene';
 import { World, CONTROL } from './view/world';
 import { HUD } from './ui/hud';
 import { Scada } from './ui/scada';
+import { Welcome } from './ui/welcome';
+import { Cutscene } from './ui/cutscene';
+import { SCENARIOS, applyScenario, scenarioById, type Scenario } from './scenario';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 
-const plant = new Plant();
-const stage = new Stage(canvas);
-const world = new World(stage);
-stage.scene.add(world.root);
+// ------------------------------------------------------------------- boot
+//
+// Nothing is built until a scenario is chosen: the design data, the world and
+// the physics all depend on it. A link with ?s=<id> goes straight in, which is
+// also what a refresh does once you have picked - and what you send someone.
 
-const hud = new HUD(plant, () => {
-  plant.reset();
-  world.select(null);
-  hud.selectedId = null;
-  hud.setSpeed(60);
-  announced.clear();
-});
-hud.setSpeed(60);
+const params = new URLSearchParams(location.search);
+const direct = scenarioById(params.get('s'));
 
-const scada = new Scada(plant);
-hud.onSetpoint = () => scada.syncSliders();
-scada.onSetpoint = () => hud.syncSliders();
-scada.onSpeed = (v) => hud.setSpeed(v);
-scada.onRun = () => hud.toggleRun();
-scada.onExit = () => sitDown(false);
+if (direct) {
+  start(direct, params.get('intro') !== '0');
+} else {
+  new Welcome(SCENARIOS, (s, intro) => {
+    history.replaceState(null, '', '?s=' + s.id);
+    start(s, intro);
+  });
+}
 
-hud.onSelect = (id) => {
-  hud.selectedId = id;
-  world.select(id ? world.get(id) ?? null : null);
-};
+/** Back to the title screen. A fresh page is the honest way to swap worlds. */
+function leaveScenario() {
+  location.href = location.pathname;
+}
 
-const VIEWS = {
-  overview: { at: new THREE.Vector3(11, -14, 0), off: new THREE.Vector3(-46, 56, 104) },
-  plant: { at: new THREE.Vector3(-18, 8, 0), off: new THREE.Vector3(-16, 30, 74) },
-  overviewHard: { at: new THREE.Vector3(-40, 2, 0), off: new THREE.Vector3(-4, 62, 212) },
-  upstream: { at: new THREE.Vector3(-106, 5, -4), off: new THREE.Vector3(2, 22, 58) },
-  stope: { at: new THREE.Vector3(58, -40, 0), off: new THREE.Vector3(-44, 26, 68) },
-} as const;
+// ------------------------------------------------------------------ start
 
-// ------------------------------------------------------------ control room
+function start(sc: Scenario, intro: boolean) {
+  applyScenario(sc);
+  document.documentElement.style.setProperty('--accent', sc.look.accent);
+  document.title = 'PasteWorks · ' + sc.title;
 
-/**
- * Sitting at the desk.
- *
- * The camera parks just outside the glass, level with the operator's eye and
- * looking out across the plant, and orbit is locked so the framing stays the
- * shot it was designed as. The SCADA overlay then draws on top of it, with a
- * transparent band where the window is.
- */
-/** The operator's eye, in the chair, facing the window. */
-const EYE = new THREE.Vector3(CONTROL.x, CONTROL.eyeY, CONTROL.z + CONTROL.eyeZ);
+  /** the opening, while it is playing - declared first, the frame loop reads it */
+  let cut: Cutscene | null = null;
 
-/** A wider lens than the site views: you are 2 m from the glass, not 70. */
-const SEAT_FOV = 60;
-const SITE_FOV = 46;
+  const plant = new Plant();
+  // There is one mode now. The fixed-feed plant still exists in the sim,
+  // because the physics harnesses use it as a regression case - but anyone
+  // actually playing runs the whole circuit, mill to destination.
+  plant.hardMode = true;
+  plant.step(0);
 
-/**
- * How far you can turn your head. Far enough to put either end wall of the
- * room square in front of you - the posters, the noticeboard, the sad plant -
- * and to look up at the warnings banner or down at your own desk.
- *
- * The hard stop is 90 deg and not negotiable: the overlay is placed with
- * tan(yaw), which is how it stays pixel-sharp, and tan blows up at a right
- * angle. 1.30 rad is 74.5 deg, which leaves the geometry comfortable and the
- * video wall well off the side of the screen by the time you get there.
- */
-const LOOK = { yaw: 1.30, up: 0.40, down: 0.42 };
+  const stage = new Stage(canvas);
+  const world = new World(stage, sc);
+  stage.scene.add(world.root);
 
-let seatedYaw = 0;
-let seatedPitch = CONTROL.pitch;
-
-function sitDown(on: boolean, fly = true) {
-  if (on === scada.open) return;
-  world.setTagsVisible(!on);
-  world.setSeated(on);
-
-  if (on) {
+  const hud = new HUD(plant, () => {
+    plant.reset();
     world.select(null);
     hud.selectedId = null;
-    stage.controls.autoRotate = false;
-    stage.controls.enabled = false;
-    stage.setFov(SEAT_FOV);
+    hud.setSpeed(60);
+    announced.clear();
+  }, sc);
+  hud.setSpeed(60);
+  hud.onLeave = leaveScenario;
 
-    // Fly to the chair first, then hand over to free look at exactly the
-    // orientation the flight ended on, so the switch is invisible.
-    const fwd = new THREE.Vector3(0, Math.sin(CONTROL.pitch), -Math.cos(CONTROL.pitch));
-    const target = EYE.clone().addScaledVector(fwd, 20);
-    stage.flyTo(target, EYE.clone().sub(target), 1100);
-    setTimeout(() => {
-      if (!scada.open) return;
-      seatedYaw = 0;
-      seatedPitch = CONTROL.pitch;
-      stage.enterFreeLook(EYE, CONTROL.pitch);
-    }, 1120);
+  const scada = new Scada(plant, sc);
+  hud.onSetpoint = () => scada.syncSliders();
+  scada.onSetpoint = () => hud.syncSliders();
+  scada.onSpeed = (v) => hud.setSpeed(v);
+  scada.onRun = () => hud.toggleRun();
+  scada.onExit = () => sitDown(false);
+  scada.onLeave = leaveScenario;
 
-    scada.show();
-    hud.setPanelsVisible(false);
-  } else {
-    stage.exitFreeLook();
-    stage.setFov(SITE_FOV);
-    scada.hide();
-    scada.setLookOffset(0, 0);
-    hud.setPanelsVisible(true);
-    stage.controls.enabled = true;
-    // the caller flies somewhere itself when it has a view in mind; two
-    // flyTo tweens running at once would fight each other
-    if (fly) view('plant');
-  }
-}
+  hud.onSelect = (id) => {
+    hud.selectedId = id;
+    world.select(id ? world.get(id) ?? null : null);
+  };
 
-// ---- turning your head ----------------------------------------------------
+  /**
+   * The site is a different shape in every world - the mass driver runs 150 m
+   * out past the pad, the furrow 200 m - so the overview sits wherever the
+   * whole of it fits.
+   */
+  const OVERVIEW: Record<string, { at: THREE.Vector3; off: THREE.Vector3 }> = {
+    stope: { at: new THREE.Vector3(-40, 2, 0), off: new THREE.Vector3(-4, 62, 212) },
+    launcher: { at: new THREE.Vector3(20, 14, 0), off: new THREE.Vector3(-20, 90, 300) },
+    trench: { at: new THREE.Vector3(30, 0, 0), off: new THREE.Vector3(-20, 80, 260) },
+    craters: { at: new THREE.Vector3(10, 4, 0), off: new THREE.Vector3(-20, 80, 230) },
+  };
+  const VIEWS = {
+    overview: OVERVIEW[sc.look.destination],
+    plant: { at: new THREE.Vector3(-18, 8, 0), off: new THREE.Vector3(-16, 30, 74) },
+    upstream: { at: new THREE.Vector3(-106, 5, -4), off: new THREE.Vector3(2, 22, 58) },
+  };
 
-const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+  // ------------------------------------------------------------ control room
 
-let look = { active: false, x: 0, y: 0, yaw: 0, pitch: 0 };
+  /** The operator's eye, in the chair, facing the window. */
+  const EYE = new THREE.Vector3(CONTROL.x, CONTROL.eyeY, CONTROL.z + CONTROL.eyeZ);
 
-scada.root.addEventListener('pointerdown', (e) => {
-  // never steal a drag that belongs to a slider or a button
-  if ((e.target as HTMLElement).closest('input, button, a, select, textarea')) return;
-  // stop the browser turning the drag into a text selection across the panels
-  e.preventDefault();
-  look = { active: true, x: e.clientX, y: e.clientY, yaw: seatedYaw, pitch: seatedPitch };
-  try { scada.root.setPointerCapture(e.pointerId); } catch { /* synthetic event */ }
-  scada.root.classList.add('dragging');
-});
+  /** A wider lens than the site views: you are 2 m from the glass, not 70. */
+  const SEAT_FOV = 60;
+  const SITE_FOV = 46;
 
-scada.root.addEventListener('pointermove', (e) => {
-  if (!look.active) return;
-  // drag the room, not the head: pulling right swings the view left
-  const K = 0.0013;
-  seatedYaw = clamp(look.yaw + (e.clientX - look.x) * K, -LOOK.yaw, LOOK.yaw);
-  seatedPitch = clamp(
-    look.pitch + (e.clientY - look.y) * K,
-    CONTROL.pitch - LOOK.down, CONTROL.pitch + LOOK.up,
-  );
-});
+  /**
+   * How far you can turn your head. Far enough to put either end wall of the
+   * room square in front of you - the posters, the noticeboard, the sad plant -
+   * and to look up at the warnings banner or down at your own desk.
+   *
+   * The hard stop is 90 deg and not negotiable: the overlay is placed with
+   * tan(yaw), which is how it stays pixel-sharp, and tan blows up at a right
+   * angle. 1.30 rad is 74.5 deg, which leaves the geometry comfortable and the
+   * video wall well off the side of the screen by the time you get there.
+   */
+  const LOOK = { yaw: 1.30, up: 0.40, down: 0.42 };
 
-const endLook = (e: PointerEvent) => {
-  if (!look.active) return;
-  look.active = false;
-  try { scada.root.releasePointerCapture(e.pointerId); } catch { /* never captured */ }
-  scada.root.classList.remove('dragging');
-};
-scada.root.addEventListener('pointerup', endLook);
-scada.root.addEventListener('pointercancel', endLook);
+  let seatedYaw = 0;
+  let seatedPitch = CONTROL.pitch;
 
-scada.onCentre = () => { seatedYaw = 0; seatedPitch = CONTROL.pitch; };
+  function sitDown(on: boolean, fly = true) {
+    if (on === scada.open) return;
+    world.setTagsVisible(!on);
+    world.setSeated(on);
 
-/**
- * Keep the furniture bolted to the room.
- *
- * The camera only ever rotates in the chair, and under pure rotation every
- * direction in the world shifts by the same angle - so reproducing it for the
- * overlay is a translation of exactly tan(angle) / tan(half FOV) of the frame.
- */
-function trackLook() {
-  if (!scada.open || !stage.freeLook) return;
-  const { yaw, pitch } = stage.look;
-  const tanV = Math.tan((stage.camera.fov * Math.PI) / 360);
-  const tanH = tanV * stage.camera.aspect;
-  scada.setLookOffset(
-    (Math.tan(yaw) / tanH) * (innerWidth / 2),
-    (Math.tan(pitch - CONTROL.pitch) / tanV) * (innerHeight / 2),
-  );
-}
+    if (on) {
+      world.select(null);
+      hud.selectedId = null;
+      stage.controls.autoRotate = false;
+      stage.controls.enabled = false;
+      stage.setFov(SEAT_FOV);
 
-function view(v: keyof typeof VIEWS) {
-  // the hard-mode site is 130 m longer, so it needs its own overview
-  const key = v === "overview" && plant.hardMode ? "overviewHard" : v;
-  const { at, off } = VIEWS[key];
-  stage.controls.autoRotate = false;
-  stage.flyTo(at, off);
-  world.select(null);
-  hud.selectedId = null;
-}
-hud.onView = (v) => {
-  if (v === 'control') { sitDown(true); return; }
-  sitDown(false, false);
-  view(v);
-};
-hud.onModeChange = () => { if (!scada.open) view('overview'); };
+      // Fly to the chair first, then hand over to free look at exactly the
+      // orientation the flight ended on, so the switch is invisible.
+      const fwd = new THREE.Vector3(0, Math.sin(CONTROL.pitch), -Math.cos(CONTROL.pitch));
+      const target = EYE.clone().addScaledVector(fwd, 20);
+      stage.flyTo(target, EYE.clone().sub(target), 1100);
+      setTimeout(() => {
+        if (!scada.open) return;
+        seatedYaw = 0;
+        seatedPitch = CONTROL.pitch;
+        stage.enterFreeLook(EYE, CONTROL.pitch);
+      }, 1120);
 
-// ------------------------------------------------------------------ picking
-
-let downAt = { x: 0, y: 0, t: 0 };
-canvas.addEventListener('pointerdown', (e) => {
-  downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
-});
-canvas.addEventListener('pointerup', (e) => {
-  // ignore the pointerup that ends an orbit drag
-  const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
-  if (moved > 5 || performance.now() - downAt.t > 450) return;
-
-  const nx = (e.clientX / innerWidth) * 2 - 1;
-  const ny = -(e.clientY / innerHeight) * 2 + 1;
-  const u = world.pick(nx, ny);
-  if (u?.id === 'control') { sitDown(true); return; }
-  world.select(u);
-  hud.selectedId = u?.id ?? null;
-});
-
-// ---------------------------------------------------------------- shortcuts
-
-addEventListener('keydown', (e) => {
-  if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
-  switch (e.key) {
-    case ' ': e.preventDefault(); hud.toggleRun(); break;
-    case '1': hud.setSpeed(0); break;
-    case '2': hud.setSpeed(1); break;
-    case '3': hud.setSpeed(10); break;
-    case '4': hud.setSpeed(60); break;
-    case '5': hud.setSpeed(240); break;
-    case 'Escape':
-      if (scada.open) sitDown(false);
-      else { world.select(null); hud.selectedId = null; }
-      break;
-    case 'c': case 'C': sitDown(!scada.open); break;
-    // a view shortcut gets you out of the chair first, or the camera would
-    // fly off while the video wall was still up and orbit still locked
-    case 'o': case 'O': sitDown(false, false); view('overview'); break;
-    case 'p': case 'P': sitDown(false, false); view('plant'); break;
-    case 'u': case 'U': sitDown(false, false); view('stope'); break;
-    case 'g': case 'G': sitDown(false, false); view('upstream'); break;
-    case 'h': case 'H': hud.setHard(!plant.hardMode); break;
-  }
-});
-
-// -------------------------------------------------------------- milestones
-
-const announced = new Set<string>();
-
-function milestones(t: Telemetry) {
-  if (t.pipe.plugged && !announced.has('plug')) {
-    announced.add('plug');
-    hud.showBanner('LINE PLUGGED', 'Flush and re-prime before you can restart', '#ff5a3c');
-  }
-  if (!t.pipe.plugged) announced.delete('plug');
-
-  if (t.status === 'complete' && !announced.has('done')) {
-    announced.add('done');
-    const ok = t.stope.avgUcs >= DESIGN.targetUcs;
-    hud.showBanner(
-      ok ? 'STOPE FILLED' : 'STOPE FILLED — UNDERSTRENGTH',
-      ok
-        ? `${t.stope.volume.toFixed(0)} m³ at ${t.stope.avgUcs.toFixed(0)} kPa · $${t.cost.perM3.toFixed(2)}/m³ · ${t.blockages} blockages`
-        : `${t.stope.avgUcs.toFixed(0)} kPa against a ${DESIGN.targetUcs} kPa target — the pillar will not stand`,
-      ok ? '#9fe870' : '#ffab3d',
-    );
-    plant.sp.running = false;
-  }
-}
-
-// -------------------------------------------------------------- frame loop
-
-const clock = new THREE.Clock();
-let hudAccum = 0;
-
-function frame() {
-  requestAnimationFrame(frame);
-  const dt = Math.min(clock.getDelta(), 0.1);
-
-  // advance the process in bounded sub-steps so fast-forward stays stable
-  const simSeconds = dt * hud.speed;
-  if (simSeconds > 0) {
-    const steps = Math.min(40, Math.max(1, Math.ceil(simSeconds / 6)));
-    const h = simSeconds / steps;
-    for (let i = 0; i < steps; i++) plant.step(h);
-  } else {
-    plant.step(0);
+      scada.show();
+      hud.setPanelsVisible(false);
+    } else {
+      stage.exitFreeLook();
+      stage.setFov(SITE_FOV);
+      scada.hide();
+      scada.setLookOffset(0, 0);
+      hud.setPanelsVisible(true);
+      stage.controls.enabled = true;
+      // the caller flies somewhere itself when it has a view in mind; two
+      // flyTo tweens running at once would fight each other
+      if (fly) view('plant');
+    }
   }
 
-  const t = plant.telemetry;
-  world.update(t, dt);
-  milestones(t);
+  // ---- turning your head --------------------------------------------------
 
-  stage.setLook(seatedYaw, seatedPitch);
-  trackLook();
+  const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
-  hudAccum += dt;
-  if (hudAccum > 0.1) {
-    hudAccum = 0;
-    if (scada.open) scada.update(t, hud.speed);
-    else hud.update(t, world.selected?.name ?? null);
-  }
+  let look = { active: false, x: 0, y: 0, yaw: 0, pitch: 0 };
 
-  stage.render();
-}
+  scada.root.addEventListener('pointerdown', (e) => {
+    // never steal a drag that belongs to a slider or a button
+    if ((e.target as HTMLElement).closest('input, button, a, select, textarea')) return;
+    // stop the browser turning the drag into a text selection across the panels
+    e.preventDefault();
+    look = { active: true, x: e.clientX, y: e.clientY, yaw: seatedYaw, pitch: seatedPitch };
+    try { scada.root.setPointerCapture(e.pointerId); } catch { /* synthetic event */ }
+    scada.root.classList.add('dragging');
+  });
 
-frame();
-
-// Open where an operator opens: in the chair, on the hard circuit. The flight
-// into the room doubles as the establishing shot, and `Esc` is right there on
-// the lintel for anyone who would rather look at the plant itself.
-// Seat first: sitting sets scada.open, which is what stops the mode change
-// below from flying the camera out to the site overview behind our backs.
-sitDown(true);
-hud.setHard(true);
-
-// Handy from the browser console: PW.plant.sp, PW.stage.camera, PW.world.units
-(window as any).PW = {
-  plant, stage, world, hud, scada, sitDown, CONTROL, THREE,
-  /** turn the operator's head from the console, in degrees */
-  look: (yawDeg: number, pitchDeg = 0) => {
-    seatedYaw = clamp((yawDeg * Math.PI) / 180, -LOOK.yaw, LOOK.yaw);
+  scada.root.addEventListener('pointermove', (e) => {
+    if (!look.active) return;
+    // drag the room, not the head: pulling right swings the view left
+    const K = 0.0013;
+    seatedYaw = clamp(look.yaw + (e.clientX - look.x) * K, -LOOK.yaw, LOOK.yaw);
     seatedPitch = clamp(
-      CONTROL.pitch + (pitchDeg * Math.PI) / 180,
+      look.pitch + (e.clientY - look.y) * K,
       CONTROL.pitch - LOOK.down, CONTROL.pitch + LOOK.up,
     );
-  },
-};
+  });
+
+  const endLook = (e: PointerEvent) => {
+    if (!look.active) return;
+    look.active = false;
+    try { scada.root.releasePointerCapture(e.pointerId); } catch { /* never captured */ }
+    scada.root.classList.remove('dragging');
+  };
+  scada.root.addEventListener('pointerup', endLook);
+  scada.root.addEventListener('pointercancel', endLook);
+
+  scada.onCentre = () => { seatedYaw = 0; seatedPitch = CONTROL.pitch; };
+
+  /**
+   * Keep the furniture bolted to the room.
+   *
+   * The camera only ever rotates in the chair, and under pure rotation every
+   * direction in the world shifts by the same angle - so reproducing it for the
+   * overlay is a translation of exactly tan(angle) / tan(half FOV) of the frame.
+   */
+  function trackLook() {
+    if (!scada.open || !stage.freeLook) return;
+    const { yaw, pitch } = stage.look;
+    const tanV = Math.tan((stage.camera.fov * Math.PI) / 360);
+    const tanH = tanV * stage.camera.aspect;
+    scada.setLookOffset(
+      (Math.tan(yaw) / tanH) * (innerWidth / 2),
+      (Math.tan(pitch - CONTROL.pitch) / tanV) * (innerHeight / 2),
+    );
+  }
+
+  function view(v: 'overview' | 'plant' | 'stope' | 'upstream') {
+    const { at, off } = v === 'stope' ? world.destinationView() : VIEWS[v];
+    stage.controls.autoRotate = false;
+    stage.flyTo(at, off);
+    world.select(null);
+    hud.selectedId = null;
+  }
+  hud.onView = (v) => {
+    if (v === 'control') { sitDown(true); return; }
+    sitDown(false, false);
+    view(v);
+  };
+
+  // ------------------------------------------------------------------ picking
+
+  let downAt = { x: 0, y: 0, t: 0 };
+  canvas.addEventListener('pointerdown', (e) => {
+    downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    if (cut?.playing) return;
+    // ignore the pointerup that ends an orbit drag
+    const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
+    if (moved > 5 || performance.now() - downAt.t > 450) return;
+
+    const nx = (e.clientX / innerWidth) * 2 - 1;
+    const ny = -(e.clientY / innerHeight) * 2 + 1;
+    const u = world.pick(nx, ny);
+    if (u?.id === 'control') { sitDown(true); return; }
+    world.select(u);
+    hud.selectedId = u?.id ?? null;
+  });
+
+  // ---------------------------------------------------------------- shortcuts
+
+  addEventListener('keydown', (e) => {
+    if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    if (cut?.playing) {
+      if (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter') { e.preventDefault(); cut.skip(); }
+      return;
+    }
+    switch (e.key) {
+      case ' ': e.preventDefault(); hud.toggleRun(); break;
+      case '1': hud.setSpeed(0); break;
+      case '2': hud.setSpeed(1); break;
+      case '3': hud.setSpeed(10); break;
+      case '4': hud.setSpeed(60); break;
+      case '5': hud.setSpeed(240); break;
+      case 'Escape':
+        if (scada.open) sitDown(false);
+        else { world.select(null); hud.selectedId = null; }
+        break;
+      case 'c': case 'C': sitDown(!scada.open); break;
+      // a view shortcut gets you out of the chair first, or the camera would
+      // fly off while the video wall was still up and orbit still locked
+      case 'o': case 'O': sitDown(false, false); view('overview'); break;
+      case 'p': case 'P': sitDown(false, false); view('plant'); break;
+      case 'u': case 'U': sitDown(false, false); view('stope'); break;
+      case 'g': case 'G': sitDown(false, false); view('upstream'); break;
+    }
+  });
+
+  // -------------------------------------------------------------- milestones
+
+  const announced = new Set<string>();
+
+  function milestones(t: Telemetry) {
+    if (cut?.playing) return;
+    if (t.pipe.plugged && !announced.has('plug')) {
+      announced.add('plug');
+      hud.showBanner('LINE PLUGGED', 'Flush and re-prime before you can restart', '#ff5a3c');
+    }
+    if (!t.pipe.plugged) announced.delete('plug');
+
+    if (t.status === 'complete' && !announced.has('done')) {
+      announced.add('done');
+      const ok = t.stope.avgUcs >= DESIGN.targetUcs;
+      const n = sc.names;
+      hud.showBanner(
+        ok ? n.complete : n.complete + ' — UNDERSTRENGTH',
+        ok
+          ? `${t.stope.volume.toFixed(0)} m³ ${n.placed} at ${t.stope.avgUcs.toFixed(0)} kPa · $${t.cost.perM3.toFixed(2)}/m³`
+            + (t.cost.perM3 <= sc.budget ? ' — under budget' : ' — over the $' + sc.budget + ' budget')
+          : `${t.stope.avgUcs.toFixed(0)} kPa against ${DESIGN.targetUcs} kPa — ${n.failNote}`,
+        ok ? '#9fe870' : '#ffab3d',
+      );
+      scada.announce(ok, t);
+      plant.sp.running = false;
+    }
+  }
+
+  // -------------------------------------------------------------- frame loop
+
+  const clock = new THREE.Clock();
+  let hudAccum = 0;
+
+  function frame() {
+    requestAnimationFrame(frame);
+    const dt = Math.min(clock.getDelta(), 0.1);
+
+    // advance the process in bounded sub-steps so fast-forward stays stable
+    const simSeconds = dt * hud.speed;
+    if (simSeconds > 0) {
+      const steps = Math.min(40, Math.max(1, Math.ceil(simSeconds / 6)));
+      const h = simSeconds / steps;
+      for (let i = 0; i < steps; i++) plant.step(h);
+    } else {
+      plant.step(0);
+    }
+
+    const t = plant.telemetry;
+    world.update(t, dt);
+    milestones(t);
+
+    stage.setLook(seatedYaw, seatedPitch);
+    trackLook();
+
+    hudAccum += dt;
+    if (hudAccum > 0.1) {
+      hudAccum = 0;
+      if (scada.open) scada.update(t, hud.speed);
+      else if (!cut?.playing) hud.update(t, world.selected?.name ?? null);
+    }
+
+    stage.render();
+  }
+
+  frame();
+
+  // ------------------------------------------------------------------ intro
+  //
+  // The opening plays with the plant running, so the rakes turn, the flows
+  // move and the mass driver fires while the story is told - and then resets
+  // it, so the shift you are handed starts at zero, not forty minutes in.
+
+  const takeTheSeat = () => {
+    cut = null;
+    plant.reset();
+    hud.syncSliders();
+    scada.syncSliders();
+    hud.setSpeed(60);
+    sitDown(true);
+  };
+
+  if (intro && sc.story.length) {
+    hud.setPanelsVisible(false);
+    world.setTagsVisible(false);
+    stage.controls.enabled = false;
+    plant.sp.running = true;
+    hud.setSpeed(60);
+    cut = new Cutscene(stage, sc, takeTheSeat);
+    cut.play();
+  } else {
+    takeTheSeat();
+  }
+
+  // Handy from the browser console: PW.plant.sp, PW.stage.camera, PW.world.units
+  (window as any).PW = {
+    plant, stage, world, hud, scada, sitDown, CONTROL, THREE, scenario: sc,
+    get cut() { return cut; },
+    /** turn the operator's head from the console, in degrees */
+    look: (yawDeg: number, pitchDeg = 0) => {
+      seatedYaw = clamp((yawDeg * Math.PI) / 180, -LOOK.yaw, LOOK.yaw);
+      seatedPitch = clamp(
+        CONTROL.pitch + (pitchDeg * Math.PI) / 180,
+        CONTROL.pitch - LOOK.down, CONTROL.pitch + LOOK.up,
+      );
+    },
+  };
+}

@@ -4,17 +4,98 @@ An interactive cemented paste backfill plant, built in Three.js.
 
 You run a real CPB flowsheet — thickener, underflow surge, plate press, cake
 bin, binder silo, twin-shaft mixer, positive-displacement paste pump — and push
-paste 1,200 m down a borehole into a stope, without plugging the line.
+paste 1,200 m down a borehole into a stope, without plugging the line. Then you
+run it again in 2068 on the abyssal plain, in 2091 on an asteroid, in 2137 under
+a city and in 2805 after everyone has left, and it is a different plant every
+time, because the world it is in asks for one.
 
 It looks like a factory game. Underneath, every number is the engineering.
 
-It opens in the control room, on the hard circuit. Four SCADA screens, a
-warnings banner above them, sixteen trends, and the plant still running out of
-the window behind the glass.
+It opens on a choice of five worlds. Pick one and it plays a short opening
+explaining how things got this way, then sits you in the control room: four
+SCADA screens, a warnings banner above them, sixteen trends, and the plant
+still running out of the window behind the glass.
 
 ---
 
-## The flowsheet
+## Five worlds
+
+In date order, which is the order on the title screen:
+
+| Era | World | Where | Front end | Dewatering | Destination | Target | Budget |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Today | Stope 14-2 North | underground gold mine | ball mill → flotation → deslime cyclones | thickener → surge → press | stope, 1,200 m line, 250 m drop | 1,000 kPa | $21/m³ |
+| 2068 | Station Nereid | Clarion–Clipperton Zone, 4,400 m down | seabed collector → nodule screen → deslime cyclones | cyclone bank → surge → press | Furrow 7, 2,800 m along the floor, no drop | 600 kPa | $23/m³ |
+| 2091 | Mass Driver One | 16 Psyche | open pit → ball mill → magnetic drums | decanter centrifuges → surge → press | slugs fired off a mass driver | 750 kPa | $300/m³ |
+| 2137 | Meridian Undercity | the canyon under Tower 9 | dredge on the old tailings dam → deslime cyclones | thickener → surge → press | Void V-9, 1,500 m line, 620 m drop | 1,500 kPa | $31/m³ |
+| 2805 | Last Shift | Earth, long after | loaders on waste piles → crusher → scrap magnet | none — the feed is dry | Crater 4, an old war crater | 1,200 kPa | $32/m³ |
+
+Every world is the same simulation with different equipment, prices and
+physics. That keeps them honest: nothing in a future world is a special rule,
+it is the same mass balance meeting a different set of constraints.
+
+- **Station Nereid (2068).** Nodule mining the second time round, after the
+  first generation left a sediment plume four hundred kilometres long. There
+  is no thickener, because there is nothing to settle into at 4,400 m that is not
+  the sea, so a **cyclone bank** dewaters inline. Tighter spigots give a denser
+  underflow and throw more fines out of the top, and out of the top is the
+  ocean: every tonne of fines that leaves the plant is a $250 plume penalty.
+  The line runs 2.8 km flat along the seabed, so static head gives nothing
+  back. At 2 °C cement cures at about two-thirds of its surface rate, so the
+  same strength needs a stiffer, richer paste. Water is free — the sea is the
+  process water tank. The control room is a hut in a pressure sphere, with the
+  fish going past the glass.
+- **Mass Driver One (2091).** Surface gravity is 0.144 m/s². A thickener would
+  take a geological age, so **decanter centrifuges** (650 kW of them) do the
+  settling by spinning, and the tailings are bound into slugs and fired off the
+  asteroid at 300 m/s to a station that wants the mass for shielding — there
+  is no stope in a vacuum to put them back into. Gravity is the only thing the
+  pipeline model changes: static head is `ρgΔz`, and there is almost no `g`. Water is
+  shipped in at $400/m³, every cubic metre locked into a slug is lost for good,
+  and binder is $1,650/t for the same reason. The metal comes out on **magnetic
+  drums**; grind coarser than about 140 µm and it stays locked in the silicate.
+- **Meridian Undercity (2137).** The mine closed in 2040, and ninety years on the old
+  stopes are migrating up under the towers. The feed is that mine's own
+  **tailings dam**, dredged: the grind is whatever it was in 2040, and after a
+  hundred years of rain it is pyritic — at 1.3% S, ordinary portland loses the
+  strength to sulphate attack and the slag blend is not optional. 620 m of drop,
+  a 1,500 kPa target because a tower stands on it, and power at $0.46/kWh.
+- **Last Shift (2805).** No mine and no stope. The feed is two centuries of
+  waste piles, scooped by loaders and crushed, with a scrap magnet pulling the
+  steel. It arrives **dry**, so there is no thickener, no surge tank and no
+  press — and every litre of mix water is hauled in at $90/m³. The crusher
+  hammers wear like grinding media and have to be ordered. The paste goes into
+  the craters the war left.
+
+Consumables arrive the way each era would send them — a tanker today, a pod
+lowered on a cable from the ship in 2068, a lander in 2091, a drone with a slung
+container in 2137, and in 2805 a crate on a teleport pad. They are driven by
+the same delivery events as the alarm log, so they turn up when the order lands.
+
+Each opening is letterboxed, typed out a line at a time and cut through black,
+with the camera flying the actual world. **Skip** jumps to the objective card;
+untick *Play the opening* on the title screen to go straight in. `?s=abyss`
+(or `today`, `psyche`, `undercity`, `caretaker`) skips the title screen, and
+`&intro=0` skips the opening too.
+
+`npm run verify:worlds` proves every one of them winnable, first at its
+default setpoints and then at a reference recipe:
+
+```
+scenario     defaults                        reference recipe
+today        runs   51 h  1377 kPa   $20.62    wins   1113 / 1000 kPa  $18.25 of $21
+abyss        runs   53 h   734 kPa   $24.53    wins    614 / 600 kPa  $21.56 of $23
+psyche       runs   52 h  1341 kPa  $339.38    wins   1062 / 750 kPa  $290.81 of $300
+undercity    runs   51 h   899 kPa   $22.84    wins   1622 / 1500 kPa  $27.52 of $31
+caretaker    runs   51 h  1116 kPa   $36.16    wins   1275 / 1200 kPa  $30.29 of $32
+```
+
+Today is the tutorial: its defaults win, narrowly, if you keep the binder and
+the balls topped up. Every other world starts over budget or under strength,
+and finding the recipe is the game. A world with no winning recipe would be a
+bug in the world, not a hard level.
+
+## Today's flowsheet
 
 ```
   mill tails ──► THICKENER ──► U/F SURGE ──► PLATE PRESS ──► CAKE BIN
@@ -23,10 +104,13 @@ the window behind the glass.
                      │              └── filtrate ──┤             │
                      └── overflow ────────────────►│             │
                                                    ▼             ▼
-                                          PROCESS WATER ───► MIXER ◄─── BINDER SILO
-                                             (recycle)          │          420 t
+                                          PROCESS WATER ───► MIXER ◄─── BINDER SILOS
+                                             (recycle)          │          2 × 210 t
                                                                 ▼
-                                                          PASTE PUMP  190 m³/h, 120 bar
+                                                          PASTE HOPPER  agitated
+                                                                ▼
+                                                   PASTE PUMPS 01A / 01B  duty + standby
+                                                                │   190 m³/h, 120 bar
                                                                 │
                                                      1,200 m developed
                                                        250 m vertical drop
@@ -34,9 +118,20 @@ the window behind the glass.
                                                       STOPE 14-2 NORTH  6,000 m³
 ```
 
-Hard mode puts the circuit that *makes* the tailings in front of it — ball
-mill, flotation bank, deslime cyclones — and a ball hopper you have to keep
-filled.
+In front of it sits the circuit that *makes* the tailings — ball mill,
+flotation bank, deslime cyclones — and a ball hopper you have to keep filled.
+
+The back end is laid out from a real plant's model, and stacked the way a real
+one is so that everything below the mixer runs on gravity: the twin-shaft mixer
+on the top deck of a braced steel tower, an agitated paste hopper hung under
+it, and a duty and a standby piston pump on the ground under that, fed through
+a Y-piece. The stair goes up the face the control room looks at, the motor
+control centre sits under the mid deck, the pumps' hydraulic packs and oil
+cooler stand beside them, and a maintenance crane runs over the top — pulling
+material cylinders is the job a paste pump needs most. Binder comes from two
+silos on braced lattice legs, each with its own screw up to the mixer, and the
+services run on a pipe rack along the north side. The handrails are safety
+yellow, because they are.
 
 ## The physics
 
@@ -52,17 +147,22 @@ makes you feel are the trade-offs the plant actually has.
 | Slump | Boger — Pashias et al. (1996) — on the 200 mm cylinder, which is what a paste plant actually measures; the Abrams cone is carried alongside as a reported number | [rheology.ts](src/sim/rheology.ts#L50) |
 | Pipeline friction | Buckingham equation for laminar Bingham-plastic flow, solved for wall shear by bisection | [rheology.ts](src/sim/rheology.ts#L96) |
 | Turbulent transition | Bingham Reynolds number with a Hedström-dependent critical value | [rheology.ts](src/sim/rheology.ts#L140) |
-| Static head recovery | `ρgΔz` — the only reason a 1,200 m paste line is possible at all | [rheology.ts](src/sim/rheology.ts#L163) |
+| Static head recovery | `ρgΔz` — the only reason a 1,200 m paste line is possible at all. `g` is the world's own, so on Psyche it is 1.5% of Earth's | [rheology.ts](src/sim/rheology.ts#L163) |
 | 28-day UCS | `UCS = k·Bd^1.4·exp(c·(Cw − Cw₀))`, after Belem & Benzaazoua | [rheology.ts](src/sim/rheology.ts#L180) |
 | Thickener | Settling flux vs rise rate, flocculant-dependent underflow ceiling, rake torque | [plant.ts](src/sim/plant.ts) |
 | Plate press | Capacity ∝ `1/√(cycle time)`, cake moisture falling with it | [plant.ts](src/sim/plant.ts) |
 | Pipe wear | `∝ V^2.4 · (0.35 + Cv)`, eating the bore over the shift | [rheology.ts](src/sim/rheology.ts) |
-| Grind (hard mode) | Bond's law: `W = 10·Wi·(1/√P80 − 1/√F80)` | [upstream.ts](src/sim/upstream.ts) |
-| PSD (hard mode) | Gates-Gaudin-Schuhmann: `F(x) = (x/k)^m` | [upstream.ts](src/sim/upstream.ts) |
-| Cyclone (hard mode) | `d50c ∝ 1/√P`, with a 28% fines bypass to underflow | [upstream.ts](src/sim/upstream.ts) |
-| Flotation (hard mode) | Mass pull from head grade, recovery and concentrate grade | [upstream.ts](src/sim/upstream.ts) |
-| Liberation (hard mode) | Recovery falls away past a 140 µm P80 (locked composites) and below 60 µm (slimes) | [upstream.ts](src/sim/upstream.ts) |
-| Mill power (hard mode) | Bond charge-filling law, P ∝ J·(1 − 0.937J), so an under-charged mill grinds coarser | [upstream.ts](src/sim/upstream.ts) |
+| Cure temperature | A maturity factor on the 28-day strength: 0.66 at 2 °C on the seabed | [plant.ts](src/sim/plant.ts) |
+| Dewatering cyclones | Inline, no bed: underflow capped at 60% solids, and the fines lost to overflow climb as the spigots tighten | [plant.ts](src/sim/plant.ts) |
+| Decanter centrifuge | Inline: the cake ceiling rises and the centrate clears with polymer dose; scroll torque in place of rake torque | [plant.ts](src/sim/plant.ts) |
+| Dry feed | No dewatering at all: the cake is the crushed feed, and every cubic metre of mix water is bought | [plant.ts](src/sim/plant.ts) |
+| Grind | Bond's law: `W = 10·Wi·(1/√P80 − 1/√F80)` | [upstream.ts](src/sim/upstream.ts) |
+| PSD | Gates-Gaudin-Schuhmann: `F(x) = (x/k)^m` | [upstream.ts](src/sim/upstream.ts) |
+| Cyclone | `d50c ∝ 1/√P`, with a 28% fines bypass to underflow | [upstream.ts](src/sim/upstream.ts) |
+| Flotation | Mass pull from head grade, recovery and concentrate grade | [upstream.ts](src/sim/upstream.ts) |
+| Magnetic drum | Recovery tied to liberation of the metal from the silicate | [upstream.ts](src/sim/upstream.ts) |
+| Liberation | Recovery falls away past a 140 µm P80 (locked composites) and below 60 µm (slimes) | [upstream.ts](src/sim/upstream.ts) |
+| Mill power | Bond charge-filling law, P ∝ J·(1 − 0.937J), so an under-charged mill grinds coarser | [upstream.ts](src/sim/upstream.ts) |
 
 A worked check of where those land:
 
@@ -81,6 +181,9 @@ yield stress: a $2 mould that reads out a rheology. The cone equivalent is
 reported next to it because every site conversation ends up in inches of cone.
 
 ## The game
+
+The worlds all play the same way, so this is Today's, where the numbers are
+easiest to check against a real plant.
 
 **Fill Stope 14-2 North — 6,000 m³ — at 1,000 kPa UCS, as cheaply as you can,
 without plugging the line.**
@@ -155,10 +258,10 @@ tank are both cut away behind sight glasses so the level is something you
 watch, and when one goes over you get streams off the rim, splash at the pad,
 a spreading puddle that stays there afterwards, and a red beacon.
 
-## Hard mode
+## The circuit that makes the tailings
 
-Standard mode hands you a fixed tailings stream. Hard mode hands you the
-circuit that makes it:
+The plant is not handed a tailings stream. Today, it gets the circuit that
+makes one:
 
 ```
   ore ──► BALL MILL ──► FLOTATION BANK ──► DESLIME CYCLONES ──► backfill plant
@@ -252,17 +355,19 @@ starved flotation (no frother)   UCS  856   $20.15/m³   under
 no frother + slag binder         UCS 1440   $22.20/m³   ON SPEC
 ```
 
-That last pair is the decision hard mode exists for: your flotation is running
-badly, so either fix the flotation or pay for a binder that does not care.
+That last pair is the decision this circuit exists for: your flotation is
+running badly, so either fix the flotation or pay for a binder that does not
+care.
 
-Press **H** to switch, or use the Standard / Hard mode buttons on the console.
-Hard mode costs more per cubic metre because the grinding power and the
-grinding media are now inside your cost boundary — it is a different accounting
-fence, not a worse plant.
+The grinding power and the grinding media are inside your cost boundary, which
+is why a cubic metre costs more here than in the fixed-feed runs of
+`verify:scenarios` and `verify:solve`. Those harnesses still use the old
+standard mode — a fixed tailings stream — because it isolates the backfill
+plant; the app itself no longer offers it.
 
 ## The control room
 
-This is where the app opens. You can leave any time with `Esc`, and get back
+Every world opens here, once its opening has played. You can leave any time with `Esc`, and get back
 by clicking the hut on the pad or pressing **C**. The camera is *inside* the
 building, at eye height in the chair, looking out through the real glass.
 **Drag to look around**: the camera turns and never moves, the way your head
@@ -310,7 +415,7 @@ still has a readable shape and room for the number.
 
 Consumables do not appear because you wished for them: somebody has to ring the
 supplier, and from the chair that is you. The desk phone orders **binder** and
-**balls**, the same two deliveries as the side console, and the handset lights
+**balls** (hammers, in 2805), the same two deliveries as the side console, and the handset lights
 up when either is getting low. There is a real one on the desk beside it, and
 its message lamp blinks at the same time.
 
@@ -323,6 +428,15 @@ instrument in the building — a motivational poster, a laminated thing somebody
 printed years ago about adding more water, the shift board, a hi-vis on its
 hook, a kettle on the filing cabinet, the traffic cone the shift board
 complains about, and a pot plant that did not survive commissioning.
+
+The walls are per world. Station Nereid's hut sits in a pressure sphere with
+fish drifting past, and the shift board is logging them (47 so far). On Psyche
+the motivational poster is about escape velocity, which is 166 m/s. In the
+Undercity the shift board belongs to Meridian Holdings, and enthusiasm is
+monitored. On the Last Shift it is day 255,500, and the kettle still works.
+The mimic, the lamps and the trends are built from the world's flowsheet too:
+no frother loop on the seabed, a hammer store instead of a ball hopper in 2805,
+a plume trend wherever fines can leave the plant.
 
 The look is clamped at 74.5°, and that is not a taste decision. The overlay is
 placed with `tan(yaw)`, which is what keeps it pixel-sharp, and `tan` blows up
@@ -342,8 +456,7 @@ reproduce. So matching the camera exactly is a translation of
 resampling. The wall is bolted to the room; the desk is not, because sliding
 the stop button off the screen would be a poor trade for a little more realism.
 
-Look is clamped to about ±30° of yaw and a similar band of pitch, which is
-roughly the width of the window. `↻ Centre` squares you back up; `Esc` or
+Look is clamped at 74.5° of yaw either way, about 23° up and 24° down. `↻ Centre` squares you back up; `Esc` or
 **Leave the desk** puts you back outside.
 
 ## Running it
@@ -356,14 +469,16 @@ npm run dev        # http://localhost:5180
 ```bash
 npm run build      # static bundle in dist/
 npm run typecheck
-npm run verify     # the four physics harnesses, outside the browser
+npm run verify     # the five physics harnesses, outside the browser
 ```
 
-**Controls** — it opens seated in the control room in hard mode; `Esc` leaves
-the desk. Outside, drag to orbit, scroll to zoom, click any unit to inspect it.
+**Controls** — pick a world, watch or skip the opening, and it sits you in the
+control room; `Esc` leaves the desk and **↺ Worlds** goes back to the title
+screen. Outside, drag to orbit, scroll to zoom, click any unit to inspect it.
 `Space` run/stop, `1`–`5` time compression (pause → 240×), `O`/`P`/`U` for the
-overview, plant and stope views, `G` for the grinding circuit, `C` for the
-control room, `H` to toggle hard mode, `Esc` to deselect or to leave the desk.
+overview, plant and destination views, `G` for the front end (the mill, the
+collector, the old dam or the piles), `C` for the control room, `Esc` to
+deselect or to leave the desk.
 
 In the control room, drag to look around — you turn but never move.
 
@@ -419,26 +534,46 @@ generated from primitives at load time, so the whole plant is code:
 src/
   sim/
     streams.ts     three-component stream algebra
-    upstream.ts    mill, flotation and cyclones - hard mode only
+    upstream.ts    every front end: mill, flotation, magnet, collector, dredge, crusher
     rheology.ts    yield stress, slump, Bingham pipeline, UCS
     plant.ts       unit operations, inventories, alarms, the tick loop
+  scenario/
+    types.ts       what a world is made of
+    today.ts       ... abyss.ts, psyche.ts, undercity.ts, caretaker.ts - pure data
+    index.ts       the list, in date order, and applyScenario()
+    flowsheet.ts   sheet(): which units, loops, lamps and trends this world has
   view/
     palette.ts     one palette: cold structure, warm process
     parts.ts       platforms, railings, ladders, level bars, holographic tags
     flow.ts        travelling-band pipe shader, driven from real velocity
     particles.ts   pooled point-sprite system for every failure mode
     spill.ts       a vessel overflowing: streams, splash, puddle
-    units.ts       thickener, surge tank, press, cake bin, silo, mixer, pump
-    upstream.ts    ball mill, flotation bank, deslime cyclone cluster
+    units.ts       thickener, surge tank, press, cake bin, twin silos, mixing tower, pumps
+    dewater.ts     the cyclone bank and the decanter centrifuges
+    upstream.ts    ball mill, flotation bank, magnetic drums, deslime cyclones
+    fronts.ts      seabed collector and riser, the old dam and its dredge, the piles
+    deliveries.ts  tanker, pod, lander, drone, teleport
+    worlds/        seabed, asteroid, city, wasteland: terrain, sky and things that move
     terrain.ts     ground, rock block model, borehole, stope
-    world.ts       site layout and interconnecting pipework
-    room.ts        what is on the control room walls, and the phone
-    scene.ts       renderer, IBL, lighting, bloom
+    world.ts       site layout and interconnecting pipework, per flowsheet
+    room.ts        what is on the control room walls, world by world, and the phone
+    scene.ts       renderer, IBL, per-world lighting, bloom
   ui/
-    setpoints.ts   the nine loops, described once, shared by both consoles
+    welcome.ts     the title screen
+    cutscene.ts    the opening: letterbox, typed text, cuts, objective card
+    setpoints.ts   the loops, described once, shared by both consoles
     hud.ts         side console, alarm log, per-unit inspector
     scada.ts       the control room: warnings, mimic, trends, video wall
 ```
+
+**A world is data.** A scenario file overrides the plant's design constants,
+the ore, the starting setpoints and a handful of names, and `applyScenario()`
+restores a snapshot of the defaults before applying one, so worlds never leak
+into each other. The scenario files do not import Three.js, which is what lets
+the verification harnesses load them in Node. `sheet()` then works out from
+the flowsheet which sliders, mimic tiles, lamps and trends exist, and the 3D
+world reads the same sheet to decide which units to build — a frother slider
+cannot turn up on the seabed, because nothing in the seabed flowsheet floats.
 
 A few things worth knowing if you pick it up:
 
@@ -449,7 +584,9 @@ A few things worth knowing if you pick it up:
   length, so band count is derived from length (`bandsFor`) or a 5 m spool looks
   like a caterpillar track.
 - **The ground plane has a hole punched in it** over the section, otherwise it
-  quietly roofs over the stope.
+  quietly roofs over the stope. It is built in (x, −z) and turned by −90°:
+  turned the other way it faces down, and back-face culling hides it from
+  every camera above ground, which is all of them.
 - **Alarms latch.** They log once when a condition comes in and once when it
   clears, the way an annunciator does — not on every scan. The warnings banner
   then reads the standing set directly, so the lamps and the log can never
@@ -486,11 +623,14 @@ paste pipeline transport, thickening and filtration, and backfill systems.
    Five further millimetres and the column sets up in the hole.
 3. Click the **process water tank** and keep half an eye on the level. It is
    the slowest thing in the plant and the first thing to catch you out.
-4. Press **H** for hard mode, then **G**. The mill drum turns, the flotation
-   bank works a froth into its launders, and the cyclone cluster lights up when
-   it is in circuit. Bypass the deslime and watch every number downstream get
-   worse at once.
+4. Press **G**. The mill drum turns, the flotation bank works a froth into its
+   launders, and the cyclone cluster lights up when it is in circuit. Bypass
+   the deslime and watch every number downstream get worse at once.
 5. Back in the control room, run it at 240× and do *not* pick up the phone. The
    ball hopper empties around hour 33, nothing trips, and you can watch the
    hopper trace hit the floor on screen 03 while the UCS bends down on 04 and
    the mimic's P80 climbs.
+6. Press **↺ Worlds** and go to Station Nereid. Tighten the cyclone underflow
+   for a denser paste and watch the plume trend — and the cost — climb with
+   it. Then try Mass Driver One and find out what water costs when it came
+   from an ice moon.

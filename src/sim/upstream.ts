@@ -22,6 +22,28 @@ import { clamp } from './streams';
 
 export type BinderType = 'opc' | 'slag';
 
+/**
+ * Where the plant's feed comes from. Each world gets its tailings a different
+ * way, and that is most of what makes the worlds different.
+ *
+ *   mill       ore, ground in a ball mill            (today, Psyche)
+ *   collector  seabed sediment, sucked up with the nodules   (the abyss)
+ *   reclaim    an old tailings dam, dredged back out  (Meridian)
+ *   scoop      waste piles, crushed                   (the last shift)
+ */
+export type Source = 'mill' | 'collector' | 'reclaim' | 'scoop';
+
+/**
+ * What the upstream circuit takes OUT before the rest comes to the plant.
+ *
+ *   flotation  sulphides float off, and what is left can attack the binder
+ *   magnetic   metal pulled off on a drum - there is nothing to float on Psyche
+ *   nodules    screened off the sediment and sent up the riser to the ship
+ *   scrap      a magnet over the crusher discharge
+ *   none       old tailings are already tailings
+ */
+export type Separation = 'flotation' | 'magnetic' | 'nodules' | 'scrap' | 'none';
+
 export interface UpstreamSetpoints {
   /** fresh ore to the mill, t/h */
   millFeed: number;
@@ -44,6 +66,24 @@ export const DEFAULT_UPSTREAM: UpstreamSetpoints = {
 };
 
 export const ORE = {
+  source: 'mill' as Source,
+  separation: 'flotation' as Separation,
+  /** 1 if this flowsheet has deslime cyclones at all */
+  deslimeCircuit: 1,
+
+  // ---- feeds that arrive already sized (collector, reclaim) ------------
+  /** P80 of the material as it comes out of the ground, um */
+  nativeP80: 118,
+  /** sulphur in it, % */
+  nativeSulphide: 0.42,
+  /** solids concentration it arrives at */
+  nativeCw: 0.30,
+  /** fraction of the collected mass that is nodules and goes up the riser */
+  noduleFrac: 0.45,
+  /** fraction of the ore that is metal, for a magnetic separation */
+  metalFrac: 0.38,
+  sgMetal: 7.8,
+
   bondWi: 14.2,        // kWh/t, a competent sulphide ore
   f80: 12000,          // um, SAG product to the ball mill
   millPowerKw: 4600,   // installed, at the design ball charge
@@ -158,6 +198,8 @@ function passing(x: number, p80: number, m: number): number {
  * @param health ball charge condition, 0..1 - see mediaEffect()
  */
 export function upstream(sp: UpstreamSetpoints, hard: boolean, health = 1): FeedSpec {
+  if (hard && ORE.source !== 'mill') return otherSources(sp, health);
+  if (hard && ORE.separation === 'magnetic') return magnetic(sp, health);
   if (!hard) {
     return {
       solids: 180, cw: 0.32,
@@ -252,6 +294,109 @@ export function upstream(sp: UpstreamSetpoints, hard: boolean, health = 1): Feed
   };
 }
 
+/** Bond's law on whatever is doing the grinding - a ball mill or a crusher. */
+function grind(feed: number, health: number) {
+  const media = mediaEffect(health);
+  const millPower = ORE.millPowerKw * media.power;
+  const workIndex = ORE.bondWi * media.workIndex;
+  const specificEnergy = millPower / feed;
+  const invSqrtP = specificEnergy / (10 * workIndex) + 1 / Math.sqrt(ORE.f80);
+  const p80 = clamp(1 / (invSqrtP * invSqrtP), 18, 900);
+  return { millPower, workIndex, specificEnergy, p80 };
+}
+
+/** Deslime cyclones on any stream: the cut, the split, and the fines kept. */
+function deslime(sp: UpstreamSetpoints, tails: number, p80: number, fines20: number) {
+  if (!ORE.deslimeCircuit || !sp.deslime) {
+    return { solids: tails, fines: fines20, d50c: 0, toTsf: 0, split: 1 };
+  }
+  const P = clamp(sp.cyclonePressure, 40, 260);
+  const d50c = clamp(42 * Math.sqrt(100 / P), 12, 90);
+  const BYPASS = 0.28;
+  const toOverflow = passing(d50c, p80, ORE.ggsM) * (1 - BYPASS);
+  const split = 1 - toOverflow;
+  const solids = tails * split;
+  return {
+    solids, d50c, split,
+    toTsf: tails - solids,
+    fines: clamp((fines20 * BYPASS) / Math.max(split, 1e-6), 0.02, 0.72),
+  };
+}
+
+/**
+ * Psyche: the ore IS metal. It is ground, and the metal is pulled off on a
+ * magnetic drum; the silicate left behind is the waste. There are no
+ * sulphides to attack the binder - but metal the drum misses rides along in
+ * the tailings and makes them heavier, and liberation still rules: a coarse
+ * grind leaves metal locked in silicate, and that metal is lost product.
+ */
+function magnetic(sp: UpstreamSetpoints, health: number): FeedSpec {
+  const feed = clamp(sp.millFeed, 150, 700);
+  const g = grind(feed, health);
+  const fines20 = clamp(passing(20, g.p80, ORE.ggsM), 0.04, 0.72);
+  const liberation = clamp(1 - 0.85 * Math.max(0, (g.p80 - 140) / 300), 0.3, 1);
+  const recovery = clamp(0.95 * liberation, 0, 0.95);
+  const concentrate = feed * ORE.metalFrac * recovery;
+  const tails = feed - concentrate;
+  const metalLeft = (feed * ORE.metalFrac * (1 - recovery)) / Math.max(tails, 1e-6);
+  const sg = 1 / ((1 - metalLeft) / ORE.sgGangue + metalLeft / ORE.sgMetal);
+  const d = deslime(sp, tails, g.p80, fines20);
+  return {
+    solids: d.solids,
+    cw: clamp(0.30 + (g.p80 - 118) * 0.00018, 0.24, 0.40),
+    p80: g.p80, fines20: d.fines, sulphide: 0, sg, hard: true,
+    specificEnergy: g.specificEnergy, millPower: g.millPower,
+    millLimited: g.specificEnergy > 24,
+    liberation, workIndex: g.workIndex,
+    massPull: (concentrate / feed) * 100, concentrate,
+    sulphideRecovery: recovery,
+    d50c: d.d50c, toTsf: d.toTsf, deslimeSplit: d.split,
+  };
+}
+
+/**
+ * Feeds that do not come out of a mill.
+ *
+ * The collector and the dredge hand over material that is already the size it
+ * is - seabed sediment is naturally fine, old tailings are whatever the old
+ * mill made - and their power is pumping, which scales with the rate. The
+ * scoop feeds a crusher, which is Bond's law again with a softer, coarser
+ * feed and hammers instead of balls. None of them float anything.
+ */
+function otherSources(sp: UpstreamSetpoints, health: number): FeedSpec {
+  const feed = clamp(sp.millFeed, 150, 700);
+  let p80 = ORE.nativeP80;
+  let millPower = ORE.millPowerKw * (feed / 420);
+  let specificEnergy = millPower / feed;
+  let workIndex = ORE.bondWi;
+  if (ORE.source === 'scoop') {
+    const g = grind(feed, health);
+    ({ p80, millPower, specificEnergy, workIndex } = g);
+  }
+  const fines20 = clamp(passing(20, p80, ORE.ggsM), 0.04, 0.72);
+
+  const pulled = ORE.separation === 'nodules' ? ORE.noduleFrac
+    : ORE.separation === 'scrap' ? 0.04 : 0;
+  const concentrate = feed * pulled;
+  const tails = feed - concentrate;
+  const sulphide = ORE.nativeSulphide;
+  const sulphideMassFrac = clamp(sulphide / 100 / 0.535, 0, 0.3);
+  const sg = 1 / ((1 - sulphideMassFrac) / ORE.sgGangue + sulphideMassFrac / ORE.sgSulphide);
+  const d = deslime(sp, tails, p80, fines20);
+
+  return {
+    solids: d.solids,
+    cw: clamp(ORE.nativeCw + (ORE.deslimeCircuit && sp.deslime ? 0.06 : 0), 0.05, 0.95),
+    p80, fines20: d.fines, sulphide, sg, hard: true,
+    specificEnergy, millPower,
+    millLimited: false,
+    liberation: 1, workIndex,
+    massPull: pulled * 100, concentrate,
+    sulphideRecovery: 0,
+    d50c: d.d50c, toTsf: d.toTsf, deslimeSplit: d.split,
+  };
+}
+
 /**
  * How the tailings PSD and chemistry reach through into the backfill plant.
  * Everything is expressed relative to the standard-mode tailings, so in
@@ -293,8 +438,10 @@ export function feedEffects(f: FeedSpec, binder: BinderType): FeedEffects {
 /** Operating cost of the upstream circuit, $/h. */
 export function upstreamCost(f: FeedSpec, sp: UpstreamSetpoints): number {
   const grinding = f.millPower * ORE.costGrinding;
-  const frother = (sp.millFeed * clamp(sp.frother, 0, 60) * 1e-6) * ORE.costFrother;
+  const frother = ORE.separation === 'flotation'
+    ? (sp.millFeed * clamp(sp.frother, 0, 60) * 1e-6) * ORE.costFrother : 0;
   // the deslime cyclone pumps are not free either
-  const cyclones = sp.deslime ? (sp.cyclonePressure / 100) * 180 * ORE.costGrinding : 0;
+  const cyclones = ORE.deslimeCircuit && sp.deslime
+    ? (sp.cyclonePressure / 100) * 180 * ORE.costGrinding : 0;
   return grinding + frother + cyclones;
 }

@@ -39,6 +39,9 @@ export class UpstreamCircuit extends Unit {
   private impellers: THREE.Group[] = [];
   private frothMats: THREE.MeshStandardMaterial[] = [];
   private cyclones: THREE.Group[] = [];
+  /** magnetic drums, on a site where the ore is the metal */
+  private drums: THREE.Object3D[] = [];
+  private drumMats: THREE.MeshStandardMaterial[] = [];
   private cycloneMats: THREE.MeshStandardMaterial[] = [];
   private frothSpouts: Spout[] = [];
   private frothAnchors: THREE.Object3D[] = [];
@@ -52,12 +55,14 @@ export class UpstreamCircuit extends Unit {
   private beacon = new Beacon();
   private _w = new THREE.Vector3();
 
-  constructor(fx: FX) {
-    super('MILL & CYCLONES', 3.0, '#9fe870');
+  /** @param opts.magnetic a magnetic drum separator where the flotation bank would be */
+  constructor(fx: FX, opts: { magnetic?: boolean } = {}) {
+    super(opts.magnetic ? 'MILL & DRUMS' : 'MILL & CYCLONES', 3.0, '#9fe870');
     const g = this.group;
 
     this.buildMill(g);
-    this.buildFlotation(g, fx);
+    if (opts.magnetic) this.buildMagnetic(g);
+    else this.buildFlotation(g, fx);
     this.buildCyclones(g, fx);
 
     this.buildPipework(g);
@@ -322,6 +327,61 @@ export class UpstreamCircuit extends Unit {
 
   // -------------------------------------------------------- flotation bank
 
+  /**
+   * Psyche's separation: two wet drum separators, each a rotating shell over a
+   * stationary magnet, in a tank. The metal rides the drum over the top and is
+   * scraped off onto the concentrate belt; everything else - the silicate -
+   * carries on down the tank as tailings.
+   */
+  private buildMagnetic(g: THREE.Group) {
+    const z = UP.floatZ;
+    const base = box(22, 1.0, 7, matte(0x2c333d, 0.95));
+    base.position.set(UP.floatX + 1, 0.5, z);
+    g.add(base);
+    for (const dx of [-5, 5]) {
+      const x = UP.floatX + dx;
+      const tankGeo = new THREE.CylinderGeometry(2.6, 2.6, 7, 24, 1, true, 0, Math.PI);
+      const tank = new THREE.Mesh(tankGeo, new THREE.MeshStandardMaterial({
+        color: 0x46505f, roughness: 0.55, metalness: 0.85, side: THREE.DoubleSide,
+      }));
+      tank.rotation.z = Math.PI / 2;
+      tank.rotation.y = Math.PI;
+      tank.position.set(x, 2.8, z);
+      g.add(tank);
+      const drum = new THREE.Group();
+      const shell = tube(1.9, 6.6, metal(0x9aa6b6, 0.25, 0.95), 28);
+      shell.rotation.z = Math.PI / 2;
+      drum.add(shell);
+      for (let k = 0; k < 6; k++) {
+        const mat = glowUnique(0x5aa8ff, 1.2);
+        const band = box(6.6, 0.1, 0.3, mat);
+        const a = (k / 6) * Math.PI * 2;
+        band.position.set(0, Math.cos(a) * 1.92, Math.sin(a) * 1.92);
+        band.rotation.x = a;
+        drum.add(band);
+        this.drumMats.push(mat);
+      }
+      drum.position.set(x, 3.6, z);
+      g.add(drum);
+      this.drums.push(drum);
+      const scraper = box(6.6, 0.12, 1.4, metal(C.steelDark));
+      scraper.position.set(x, 5.4, z + 1.9);
+      scraper.rotation.x = -0.5;
+      g.add(scraper);
+    }
+    // concentrate belt away to the smelter, with a lump of metal on it now and then
+    const belt = box(22, 0.3, 1.6, metal(0x3a4450, 0.6, 0.8));
+    belt.position.set(UP.floatX + 1, 4.8, z + 3.6);
+    g.add(belt);
+    const lamp = strip(21, 0x5aa8ff, 0.08, 1.6);
+    lamp.position.set(UP.floatX + 1, 5.0, z + 4.45);
+    g.add(lamp);
+    const hopper = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 1.0, 3, 4), metal(0x6a7686, 0.5, 0.85));
+    hopper.rotation.y = Math.PI / 4;
+    hopper.position.set(UP.floatX + 13, 4.2, z + 3.6);
+    g.add(hopper);
+  }
+
   private buildFlotation(g: THREE.Group, fx: FX) {
     const x0 = UP.floatX - 8;
     const z = UP.floatZ;
@@ -508,6 +568,9 @@ export class UpstreamCircuit extends Unit {
   update(t: Telemetry, dt: number, fx: FX) {
     const u = t.upstream;
     const live = u.hard && t.status !== 'idle';
+
+    for (const d of this.drums) d.rotation.x += dt * (live ? 1.2 : 0);
+    for (const m of this.drumMats) m.emissiveIntensity = live ? 1.6 : 0.4;
 
     // mill: the drum turns at a steady fraction of critical speed, and the
     // shell runs hotter (brighter) the harder you are grinding

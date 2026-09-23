@@ -24,6 +24,14 @@ export const C = {
   magenta: 0xff5fa2,
   red: 0xff5a3c,
 
+  // paint, the way a real plant is painted: safety-yellow handrails, the pump
+  // maker's orange, electrical-room blue, and concrete under all of it
+  handrail: 0xc9a227,
+  pumpPaint: 0xa9612a,
+  panel: 0x2c4a66,
+  cooler: 0x2f5f86,
+  concrete: 0x3a3f46,
+
   // process materials
   tails: 0x6e6455,   // as-milled tailings slurry
   water: 0x3fa9f5,   // overflow / filtrate / make-up

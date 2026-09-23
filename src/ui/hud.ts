@@ -1,9 +1,10 @@
 import type { Plant, Telemetry } from '../sim/plant';
 import { DESIGN } from '../sim/plant';
 import { ORE } from '../sim/upstream';
+import type { Scenario } from '../scenario';
+import { sheet, type Sheet } from '../scenario/flowsheet';
 import {
-  SLIDERS, UPSTREAM_SLIDERS, ALL_SLIDERS, SliderSpec,
-  bagValue, setBagValue, shown,
+  SliderSpec, bagValue, setBagValue, shown, upstreamSliders, plantSliders,
 } from './setpoints';
 
 const el = <K extends keyof HTMLElementTagNameMap>(
@@ -38,27 +39,28 @@ export class HUD {
   private flushBtn!: HTMLButtonElement;
   private siloBtn!: HTMLButtonElement;
   private speedBtns: HTMLButtonElement[] = [];
-  private modeBtns: HTMLButtonElement[] = [];
   private upSection!: HTMLElement;
   private deslimeBtn!: HTMLButtonElement;
   private binderBtn!: HTMLButtonElement;
   private mediaBtn!: HTMLButtonElement;
   private kpi = new Map<string, { box: HTMLElement; val: HTMLElement }>();
+  private specs: SliderSpec[] = [];
+  private sh: Sheet = sheet();
 
   /** which unit the inspector is pinned to */
   selectedId: string | null = null;
   onSelect: (id: string | null) => void = () => {};
-  onView: (v: 'overview' | 'plant' | 'stope' | 'control') => void = () => {};
-  onModeChange: (hard: boolean) => void = () => {};
+  onView: (v: 'overview' | 'plant' | 'stope' | 'upstream' | 'control') => void = () => {};
+  /** back to the title screen */
+  onLeave: () => void = () => {};
   /** fired whenever a slider here moves, so the SCADA mirror can follow */
   onSetpoint: () => void = () => {};
 
   speed = 60;
   private speeds = [0, 1, 10, 60, 240];
 
-  constructor(private plant: Plant, private onReset: () => void) {
+  constructor(private plant: Plant, private onReset: () => void, private sc: Scenario) {
     this.build();
-    this.setHard(false);
   }
 
   // --------------------------------------------------------------- building
@@ -79,15 +81,18 @@ export class HUD {
     const p = el('div', 'panel');
     p.id = 'mast';
     const title = el('div', 'title');
-    title.append(el('b', undefined, 'PASTEWORKS'), el('span', undefined, 'CPB Plant 01'));
+    title.append(el('b', undefined, 'PASTEWORKS'));
+    const leave = el('button', 'leave', '&#8634;&nbsp;Worlds');
+    leave.title = 'Back to the choice of worlds';
+    leave.onclick = () => this.onLeave();
+    title.append(leave);
     p.append(title);
-    p.append(el('div', 'sub',
-      'Cemented paste backfill, surface to stope. Thicken it, filter it, mix it '
-      + 'with binder, and push it 1,200&nbsp;m down the hole &mdash; without plugging the line.'));
+    p.append(el('div', 'world', this.sc.era + ' &middot; ' + this.sc.title));
+    p.append(el('div', 'sub', this.sc.objective));
 
     const goal = el('div', 'goal');
     const row = el('div', 'row');
-    row.innerHTML = '<span>Stope 14-2 North</span>';
+    row.innerHTML = '<span>' + this.sc.names.dest + '</span>';
     this.goalTxt = el('b', undefined, '0%');
     row.append(this.goalTxt);
     goal.append(row);
@@ -112,7 +117,7 @@ export class HUD {
     d.innerHTML = 'Drag to orbit &middot; scroll to zoom &middot; '
       + '<b style="color:var(--cyan)">click any unit</b> to inspect &middot; '
       + '<kbd>Space</kbd> run/stop &middot; <kbd>1</kbd>&ndash;<kbd>5</kbd> speed &middot; <kbd>O</kbd>/<kbd>P</kbd>/<kbd>U</kbd>/<kbd>G</kbd> views &middot; '
-      + '<kbd>C</kbd> control room &middot; <kbd>H</kbd> hard mode';
+      + '<kbd>C</kbd> control room';
     return d;
   }
 
@@ -145,7 +150,7 @@ export class HUD {
     views.style.gridTemplateColumns = 'repeat(2, 1fr)';
     for (const [key, label] of [
       ['overview', 'Overview'], ['plant', 'Plant'],
-      ['stope', 'Stope'], ['control', 'Control room'],
+      ['upstream', this.sh.frontButton], ['stope', this.sc.names.destButton],
     ] as const) {
       const btn = el('button');
       btn.textContent = label;
@@ -156,6 +161,10 @@ export class HUD {
 
     p.append(b);
     return p;
+  }
+
+  private dewaterName() {
+    return { thickener: 'thickener', cyclones: 'cyclones', centrifuge: 'decanters', dry: 'mixer' }[this.sh.dewater];
   }
 
   private alarms() {
@@ -173,32 +182,18 @@ export class HUD {
     p.append(el('h2', undefined, '<span>Operator console</span><span style="color:var(--muted)">SETPOINTS</span>'));
     const b = el('div', 'body');
 
-    // ---- difficulty -------------------------------------------------------
-    const modes = el('div', 'speeds');
-    modes.style.gridTemplateColumns = '1fr 1fr';
-    modes.style.marginBottom = '12px';
-    for (const [hard, label] of [[false, 'Standard'], [true, 'Hard mode']] as const) {
-      const btn = el('button');
-      btn.textContent = label;
-      btn.onclick = () => this.setHard(hard);
-      this.modeBtns.push(btn);
-      modes.append(btn);
-    }
-    b.append(modes);
-
-    // ---- upstream circuit, hard mode only ---------------------------------
+    // ---- upstream circuit ------------------------------------------------
     this.upSection = el('div');
-    const upHead = el('div', 'sect',
-      'Upstream circuit<em>mill &middot; flotation &middot; cyclones</em>');
+    const upHead = el('div', 'sect', 'Upstream circuit<em>' + this.sh.upstreamKicker + '</em>');
     this.upSection.append(upHead);
-    for (const s of UPSTREAM_SLIDERS) this.upSection.append(this.slider(s));
+    for (const s of upstreamSliders()) this.upSection.append(this.slider(s));
 
     const upToggles = el('div', 'actions');
     this.deslimeBtn = el('button');
     this.deslimeBtn.onclick = () => {
       this.plant.up.deslime = !this.plant.up.deslime;
     };
-    upToggles.append(this.deslimeBtn);
+    if (this.sh.hasDeslime) upToggles.append(this.deslimeBtn);
 
     this.binderBtn = el('button');
     this.binderBtn.onclick = () => {
@@ -210,8 +205,10 @@ export class HUD {
     b.append(this.upSection);
 
     // ---- backfill plant ---------------------------------------------------
-    b.append(el('div', 'sect', 'Backfill plant<em>thickener to stope</em>'));
-    for (const s of SLIDERS) b.append(this.slider(s));
+    const from = this.sh.dewater === 'dry' ? 'dry mix' : this.dewaterName();
+    b.append(el('div', 'sect', 'Backfill plant<em>' + from + ' to '
+      + this.sc.names.destButton.toLowerCase() + '</em>'));
+    for (const s of plantSliders()) b.append(this.slider(s));
 
     // Both deliveries together. They are the same job - ring the supplier -
     // and splitting them across two sections of the console was why running
@@ -223,7 +220,8 @@ export class HUD {
 
     this.mediaBtn = el('button');
     this.mediaBtn.onclick = () => this.plant.orderMedia();
-    act.append(this.mediaBtn);
+    if (this.sh.hasMedia) act.append(this.mediaBtn);
+    else this.siloBtn.style.gridColumn = '1 / -1';
 
     this.flushBtn = el('button', 'warn');
     this.flushBtn.textContent = 'Flush line';
@@ -266,18 +264,11 @@ export class HUD {
     c.append(el('div', 'hint', s.hint));
 
     this.sliders.set(s.key, input);
+    this.specs.push(s);
     this.vals.set(s.key, v);
     this.ctls.set(s.key, c);
     this.paintSlider(s, input, v);
     return c;
-  }
-
-  setHard(hard: boolean) {
-    this.plant.hardMode = hard;
-    this.upSection.style.display = hard ? '' : 'none';
-    this.modeBtns[0].classList.toggle('on', !hard);
-    this.modeBtns[1].classList.toggle('on', hard);
-    this.onModeChange(hard);
   }
 
   private paintSlider(s: SliderSpec, input: HTMLInputElement, v: HTMLElement) {
@@ -289,7 +280,7 @@ export class HUD {
 
   /** Pull every slider back from the plant - after a reset, or a SCADA edit. */
   syncSliders() {
-    for (const s of ALL_SLIDERS) {
+    for (const s of this.specs) {
       const input = this.sliders.get(s.key)!;
       input.value = String(bagValue(this.plant, s));
       this.paintSlider(s, input, this.vals.get(s.key)!);
@@ -320,7 +311,7 @@ export class HUD {
       ['ucs', '28 d UCS'],
       ['press', 'Discharge'],
       ['vel', 'Line vel'],
-      ['cost', 'Unit cost'],
+      ['cost', 'Cost · $' + this.sc.budget + ' budget'],
       ['blk', 'Blockages'],
     ] as const) {
       const k = el('div', 'k');
@@ -390,12 +381,10 @@ export class HUD {
     this.siloBtn.textContent = 'Order binder  ·  silo ' + f(t.silo.pct, 0) + '%';
     this.siloBtn.disabled = t.silo.pct > 97;
     this.siloBtn.classList.toggle('warn', t.silo.pct < 12);
-    const hard = this.plant.hardMode;
-    this.mediaBtn.textContent = hard
-      ? 'Order balls  ·  hopper ' + f(t.media.pct, 0) + '%'
-      : 'Order balls  ·  standard mode';
-    this.mediaBtn.disabled = !hard || t.media.pct > 97;
-    this.mediaBtn.classList.toggle('warn', hard && t.media.pct < 20);
+    this.mediaBtn.textContent = 'Order ' + this.sh.media.button.toLowerCase() + '  ·  '
+      + f(t.media.pct, 0) + '%';
+    this.mediaBtn.disabled = t.media.pct > 97;
+    this.mediaBtn.classList.toggle('warn', t.media.pct < 20);
 
     // ---- upstream toggles
     const up = this.plant.up;
@@ -403,14 +392,15 @@ export class HUD {
     this.deslimeBtn.classList.toggle('on', up.deslime);
     this.binderBtn.textContent = up.binderType === 'slag' ? 'Binder: slag blend' : 'Binder: OPC';
     this.binderBtn.classList.toggle('on', up.binderType === 'slag');
-    this.ctls.get('cyclonePressure')!.style.opacity = up.deslime ? '1' : '0.35';
-    this.ctls.get('frother')!.classList.toggle('flag',
+    const cp = this.ctls.get('cyclonePressure');
+    if (cp) cp.style.opacity = up.deslime ? '1' : '0.35';
+    this.ctls.get('frother')?.classList.toggle('flag',
       t.upstream.sulphide > 0.9 && up.binderType === 'opc');
-    this.ctls.get('millFeed')!.classList.toggle('flag',
+    this.ctls.get('millFeed')?.classList.toggle('flag',
       t.upstream.solids < t.upstream.plantCapacity * 0.92);
 
     // flag setpoints that are being over-ridden by physics
-    this.ctls.get('ufCw')!.classList.toggle('flag', this.plant.sp.ufCw > t.thickener.maxUfCw + 0.002);
+    this.ctls.get('ufCw')?.classList.toggle('flag', this.plant.sp.ufCw > t.thickener.maxUfCw + 0.002);
     this.ctls.get('targetSlump')!.classList.toggle('flag', t.mixer.waterLimited);
     this.ctls.get('strokeRate')!.classList.toggle('flag', t.pump.starved || t.pump.pressureLimited);
 
@@ -426,7 +416,7 @@ export class HUD {
       t.pump.pressureLimited ? 'bad' : t.pump.pressurePct > 85 ? 'warn' : 'ok');
     this.setKpi('vel', f(t.pipe.velocity, 2) + ' m/s', '');
     this.setKpi('cost', t.stope.volume > 1 ? '$' + f(t.cost.perM3, 2) + '/m³' : money(t.cost.total),
-      t.cost.perM3 > 18 ? 'warn' : t.stope.volume > 1 ? 'ok' : '');
+      t.stope.volume < 1 ? '' : t.cost.perM3 > this.sc.budget ? 'warn' : 'ok');
     this.setKpi('blk', String(t.blockages), t.blockages > 0 ? 'bad' : 'ok');
 
     // ---- alarms
@@ -464,11 +454,50 @@ export class HUD {
     switch (id) {
       case 'upstream': {
         const u = t.upstream;
-        if (!u.hard) {
-          rows.push(['Mode', 'Standard - the tailings are given to you']);
-          note = 'Switch to hard mode and the mill, the flotation bank and the '
-            + 'deslime cyclones become yours to set. The particle size and the '
-            + 'sulphide content they produce reach all the way to the stope.';
+        const sh = this.sh;
+        if (sh.source !== 'mill') {
+          rows.push(
+            [sh.feed.label, f(this.plant.up.millFeed, 0) + ' ' + sh.feed.unit],
+            ['Power', f(u.millPower, 0) + ' kW  (' + money(t.cost.upstream) + ' spent)'],
+          );
+          if (sh.source === 'scoop') {
+            rows.push(
+              ['Crusher product P80', f(u.p80, 0) + ' µm'],
+              ['Hammer store', f(t.media.stock, 1) + ' t  (' + (Number.isFinite(t.media.hoursLeft)
+                ? f(t.media.hoursLeft, 0) + ' h left)' : 'idle)')],
+              ['Hammer condition', f(t.media.health * 100, 0) + '%'],
+              ['Scrap pulled', f(u.concentrate, 1) + ' t/h'],
+            );
+          } else {
+            rows.push(['Material P80', f(u.p80, 0) + ' µm, as it comes']);
+          }
+          if (sh.source === 'collector') rows.push(['Nodules to the riser', f(u.concentrate, 0) + ' t/h']);
+          if (sh.hasSulphide) rows.push(['Tailings sulphur', f(u.sulphide, 2) + '% S']);
+          if (sh.hasDeslime) {
+            rows.push(['Deslime', this.plant.up.deslime
+              ? 'in circuit, d50c ' + f(u.d50c, 1) + ' µm' : 'bypassed']);
+          }
+          rows.push(
+            ['To the plant', f(u.solids, 0) + ' t/h  (plant takes ' + u.plantCapacity + ')'],
+            ['Sent back', f(u.toTsf + u.bypassToTsf, 0) + ' t/h'],
+            ['Tailings < 20 µm', f(u.fines20 * 100, 1) + '%'],
+          );
+          if (sh.hasPress) rows.push(['— press capacity', '×' + f(u.effects.filterCapacity, 2)]);
+          rows.push(
+            ['— yield stress', '×' + f(u.effects.yieldStress, 2)],
+            ['— 28 d strength', '×' + f(u.effects.ucs, 2)],
+          );
+          note = sh.source === 'collector'
+            ? 'Abyssal sediment is fine by nature, and fines are the whole story: they '
+              + 'hold water, raise the yield stress and cost strength. The deslime '
+              + 'cyclones buy that back, and send what they reject up the riser.'
+            : sh.source === 'reclaim'
+            ? 'A century-old dam: pyritic tailings that have been oxidising in the rain '
+              + 'since before the towers went up. On ordinary portland the sulphate eats '
+              + 'the strength. The slag blend is not optional here.'
+            : 'Crushed waste is coarse and dry. Coarse binds well and pumps easily; dry '
+              + 'means every litre of mix water came off a tanker. Worn hammers push the '
+              + 'product coarser still.';
           break;
         }
         rows.push(
@@ -483,15 +512,21 @@ export class HUD {
               ? f(t.media.hoursLeft, 0) + ' h left)' : 'idle)')],
           ['Media draw', f(t.media.draw, 2) + ' t/h  ·  ' + money(t.cost.media) + ' spent'],
           ['Grind P80', f(u.p80, 0) + ' µm'],
-          ['Liberation', f(u.liberation * 100, 0) + '% of the sulphide is floatable'],
-          ['Flotation recovery', f(u.sulphideRecovery * 100, 1) + '%'],
-          ['Mass pull', f(u.massPull, 2) + '%  (' + f(u.concentrate, 0) + ' t/h conc)'],
-          ['Tailings sulphur', f(u.sulphide, 2) + '% S'],
+          ...(sh.separation === 'magnetic' ? [
+            ['Liberation', f(u.liberation * 100, 0) + '% of the metal is free of silicate'],
+            ['Drum recovery', f(u.sulphideRecovery * 100, 1) + '%'],
+            ['Metal pulled', f(u.massPull, 1) + '%  (' + f(u.concentrate, 0) + ' t/h to the smelter)'],
+          ] as Array<[string, string]> : [
+            ['Liberation', f(u.liberation * 100, 0) + '% of the sulphide is floatable'],
+            ['Flotation recovery', f(u.sulphideRecovery * 100, 1) + '%'],
+            ['Mass pull', f(u.massPull, 2) + '%  (' + f(u.concentrate, 0) + ' t/h conc)'],
+            ['Tailings sulphur', f(u.sulphide, 2) + '% S'],
+          ] as Array<[string, string]>),
           ['Solids SG', f(u.sg, 3)],
-          ['Deslime', this.plant.up.deslime
-            ? 'in circuit, d50c ' + f(u.d50c, 1) + ' µm' : 'bypassed'],
+          ...(sh.hasDeslime ? [['Deslime', this.plant.up.deslime
+            ? 'in circuit, d50c ' + f(u.d50c, 1) + ' µm' : 'bypassed']] as Array<[string, string]> : []),
           ['To backfill', f(u.solids, 0) + ' t/h  (plant takes ' + u.plantCapacity + ')'],
-          ['Rejected to TSF', f(u.toTsf + u.bypassToTsf, 0) + ' t/h'],
+          [sh.separation === 'magnetic' ? 'Sent back' : 'Rejected to TSF', f(u.toTsf + u.bypassToTsf, 0) + ' t/h'],
           ['Tailings < 20 µm', f(u.fines20 * 100, 1) + '%'],
           ['— press capacity', '×' + f(u.effects.filterCapacity, 2)],
           ['— cake moisture', '×' + f(u.effects.cakeMoisture, 2)],
@@ -507,7 +542,12 @@ export class HUD {
           : u.sulphide > 0.9 && u.binderType === 'opc'
           ? 'Sulphide is attacking the binder. Either lift the frother to float '
             + 'more of it out, or move to a slag blend that resists it — the slag '
-            + 'costs $175/t against $148/t for OPC.'
+            + 'costs $' + (DESIGN.costBinder * DESIGN.slagPremium).toFixed(0)
+            + '/t against $' + DESIGN.costBinder + '/t for OPC.'
+          : sh.separation === 'magnetic'
+          ? 'Grind fine enough to free the metal and the drum pulls it; grind coarser '
+            + 'and it leaves in the tailings - which is a waste of iron-nickel but '
+            + 'makes a slug that cures harder. Every tonne of balls came up a gravity well.'
           : 'Fines are the whole story. Every extra percent below 20 µm holds '
             + 'water in the cake, raises yield stress at the same solids, and '
             + 'costs binder to make up the strength. Desliming buys all of that '
@@ -516,6 +556,27 @@ export class HUD {
       }
       case 'thickener': {
         const th = t.thickener;
+        if (this.sh.dewater !== 'thickener') {
+          const cyc = this.sh.dewater === 'cyclones';
+          rows.push(
+            ['Feed', f(t.feed.solids, 0) + ' t/h dry @ ' + f(t.upstream.cw * 100, 0) + '%'],
+            [cyc ? 'Underflow' : 'Cake', f(th.underflow.solids, 0) + ' t/h @ ' + f(th.ufCw * 100, 1) + '% Cw'],
+            ['Most it will make', f(th.maxUfCw * 100, 1) + '%'],
+            ['Fines to overflow', f(th.overflow.solids, 2) + ' t/h'],
+            ['Overflow solids', f(th.overflowClarity, 0) + ' mg/L'],
+            ['Bypassed', f(t.upstream.bypassToTsf, 0) + ' t/h'],
+          );
+          if (!cyc) rows.push(['Scroll torque', f(th.torque, 0) + '%']);
+          note = cyc
+            ? 'No bed, no rakes, no storage: a cyclone bank makes its underflow as the '
+              + 'feed arrives. Tighter spigots mean a denser underflow and more fines out of '
+              + 'the top - and out of the top, down here, is the sea.'
+            : 'A thickener settles under gravity, and there is almost none here. The '
+              + 'decanter spins the tailings at a few thousand g instead. Polymer buys a '
+              + 'drier cake and a cleaner centrate; the scroll torque tells you when you '
+              + 'have asked for too much.';
+          break;
+        }
         rows.push(
           ['Feed', f(t.feed.solids, 0) + ' t/h dry @ ' + f(t.upstream.cw * 100, 0) + '%'],
           ['Tailings P80', f(t.upstream.p80, 0) + ' µm, '
@@ -539,8 +600,9 @@ export class HUD {
           ['Level', f(t.ufTank.pct, 0) + '%'],
           ['Density', f(t.ufTank.cw * 100, 1) + '% solids'],
         );
-        note = 'The buffer that lets the thickener and the press run at different '
-          + 'rates. Empty it and the press starves; fill it and the bed builds.';
+        note = 'The buffer that lets the ' + this.dewaterName() + ' and the press run at different '
+          + 'rates. Empty it and the press starves; fill it and '
+          + (this.sh.hasThickener ? 'the bed builds.' : 'the excess goes past the plant.');
         break;
       case 'press': {
         const fl = t.filter;
@@ -639,17 +701,18 @@ export class HUD {
           ['Plug risk', f(p.plugRisk * 100, 0) + '%'],
         );
         note = p.chokeRequired
-          ? 'The 250 m drop is giving back more head than friction is taking. The '
-            + 'column would run away on its own — the choke at the collar is holding it.'
-          : 'Solved with the Buckingham equation for a Bingham plastic. The vertical '
-            + 'drop returns ' + f(p.staticRecovery, 0) + ' kPa of static head, which is '
-            + 'the only reason a 1,200 m paste line is possible at all.';
+          ? 'The ' + DESIGN.pipeDrop + ' m drop is giving back more head than friction '
+            + 'is taking. The column would run away on its own — the choke at the '
+            + 'collar is holding it.'
+          : this.sc.names.lineWhy;
         break;
       }
       case 'stope': {
         const s = t.stope;
         rows.push(
-          ['Placed', f(s.volume, 0) + ' m³  (' + f(s.pct, 1) + '%)'],
+          [this.sc.names.placed[0].toUpperCase() + this.sc.names.placed.slice(1),
+            f(s.volume, 0) + ' of ' + DESIGN.stopeVolume + ' m³  (' + f(s.pct, 1) + '%)'],
+          ['Strength target', DESIGN.targetUcs + ' kPa'],
           ['Tonnes', f(s.tonnesPlaced, 0) + ' t'],
           ['Binder placed', f(s.binderPlaced, 1) + ' t'],
           ['Average UCS', f(s.avgUcs, 0) + ' kPa'],
@@ -657,20 +720,23 @@ export class HUD {
           ['Unit cost', s.volume > 1 ? '$' + f(t.cost.perM3, 2) + '/m³' : '—'],
           ['Binder / floc / power', money(t.cost.binder) + ' / ' + money(t.cost.floc) + ' / ' + money(t.cost.power)],
         );
-        note = 'The stope has to stand up when the pillar beside it is mined. '
-          + 'Average strength is what gets signed off, but the weakest lift is what '
-          + 'actually fails.';
+        note = this.sc.names.why;
         break;
       }
       case 'water':
         rows.push(
-          ['Thickener overflow', f(t.thickener.overflow.water, 0) + ' t/h'],
+          [this.sh.dewater === 'centrifuge' ? 'Centrate'
+            : this.sh.dewater === 'cyclones' ? 'Cyclone overflow' : 'Thickener overflow',
+          f(t.thickener.overflow.water, 0) + ' t/h'],
           ['Filtrate', f(t.filter.filtrate.water, 0) + ' t/h'],
           ['Mixer make-up', f(t.mixer.mixWater, 1) + ' m³/h'],
-          ['Raw water spend', money(t.cost.water)],
+          ['Water spend', money(t.cost.water)
+            + (DESIGN.costWaterLost > 0 ? '  ($' + DESIGN.costWaterLost + '/m³ lost in the fill)' : '')],
         );
-        note = 'Almost all the water taken out at the thickener and the press goes '
-          + 'back to the mill. What the mixer adds is the only real consumption.';
+        note = this.sh.dewater === 'dry'
+          ? 'There is no water here to take out. Every cubic metre in the mix was hauled in.'
+          : 'Almost all the water taken out at the ' + this.dewaterName() + ' and the press goes '
+            + 'back to the mill. What the mixer adds is the only real consumption.';
         break;
     }
 

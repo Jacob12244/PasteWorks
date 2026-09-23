@@ -91,6 +91,49 @@ export const DESIGN = {
   pwTankVol: 150,           // m3 process water tank
   millReturnCap: 330,       // m3/h of recovered water the mill will take back
   costSpill: 150,           // $/m3 spilled - clean-up, reporting, lost time
+  /** m/s2 - only the pipeline's static head sees it; the slump test is a lab test at 1 g */
+  gravity: 9.81,
+  /**
+   * Strength actually developed, as a fraction of the 20 degC laboratory
+   * number. Cement hydration slows in the cold, and at 2 degC it is well
+   * behind - the maturity effect.
+   */
+  cureFactor: 1,
+  /** slag blend price relative to ordinary portland */
+  slagPremium: 175 / 148,
+  /**
+   * $/m3 for the water that leaves locked inside the placed fill and never
+   * comes back. On a mine with dewatering to spare it is free, which is why
+   * the baseline carries zero. Where water had to be shipped in or dug out,
+   * it is the biggest line on the bill - and it is what makes a stiffer,
+   * drier paste worth the trouble.
+   */
+  costWaterLost: 0,
+  /** thickener, cyclone bank, decanter centrifuge, or nothing at all (dry feed) */
+  dewater: 'thickener' as Dewater,
+  /** $/t of solids that leave with a cyclone or centrifuge overflow */
+  costPlume: 0,
+  /** kW the dewatering machines draw on top of the rest of the plant */
+  dewaterPowerKw: 0,
+  /** % moisture of a dry feed as it goes into the bin */
+  dryMoisture: 8,
+};
+
+/** How the tailings lose their water before the mixer. */
+export type Dewater = 'thickener' | 'cyclones' | 'centrifuge' | 'dry';
+
+/**
+ * The words the plant uses about its own site. The sim is the same machine
+ * wherever it is standing; what it spills onto, and what it is filling, are
+ * not.
+ */
+export const SITE_TEXT = {
+  done: 'Stope full - placement complete',
+  spillTo: 'the pad',
+  /** what the consumable is: "Ball hopper" / "Hammer store" */
+  media: 'Ball hopper',
+  mediaThing: 'grinding media',
+  delivery: 'by tanker',
 };
 
 export interface Telemetry {
@@ -231,11 +274,13 @@ export class Plant {
   private ucsMin = Infinity;
   /** last tick's cake draw, t/h wet - the press runs level control against it */
   private lastCakeDraw = 0;
-  private mediaStock = 11;  // t of balls in the charging hopper
+  private mediaStock = ORE.hopperCap * 0.6875;  // t in the hopper - 11 of 16 on a ball mill
   private mediaHealth = 1;  // ball charge condition, 0..1
   private pwVol = 80;       // m3 in the process water tank
   private spilledM3 = 0;    // cumulative spill to the pad
   private feedSpec!: FeedSpec;
+  /** feed the plant could not take this tick, sent back where it came from */
+  private lastExcess = 0;
   private feedFx!: FeedEffects;
 
   // --- smoothed / animated state ----------------------------------------
@@ -263,11 +308,14 @@ export class Plant {
   telemetry!: Telemetry;
 
   constructor() {
+    // a machine with no bed starts where it is set, not where a thickener would be
+    if (DESIGN.dewater !== 'thickener') this.ufCwActual = this.sp.ufCw;
     this.step(0);
   }
 
   reset() {
-    this.bed = 220; this.ufVol = 90; this.ufCwActual = 0.60;
+    this.bed = 220; this.ufVol = 90;
+    this.ufCwActual = DESIGN.dewater !== 'thickener' ? DEFAULT_SETPOINTS.ufCw : 0.60;
     this.cakeMass = 40; this.cakeMoist = 17; this.siloMass = 380;
     this.stopeVol = 0; this.stopeTonnes = 0; this.stopeBinder = 0;
     this.ucsSum = 0; this.ucsMin = Infinity; this.lastCakeDraw = 0;
@@ -277,7 +325,7 @@ export class Plant {
     this.cost = {
       binder: 0, floc: 0, power: 0, water: 0, spill: 0, upstream: 0, media: 0,
     };
-    this.mediaStock = 11; this.mediaHealth = 1;
+    this.mediaStock = ORE.hopperCap * 0.6875; this.mediaHealth = 1; this.lastExcess = 0;
     this.pwVol = 80; this.spilledM3 = 0;
     this.alarms = []; this.alarmSeen.clear(); this.active.clear();
     this.sp = { ...DEFAULT_SETPOINTS };
@@ -290,7 +338,7 @@ export class Plant {
     this.siloMass = DESIGN.siloCap;
     // Binder is costed as it is consumed at the mixer, not on delivery,
     // so the silo can be topped up without distorting the $/m3 figure.
-    this.alarm('silo-fill', 'info', 'Binder delivery received - ' + added.toFixed(0) + ' t', true);
+    this.alarm('silo-fill', 'info', 'Binder delivered ' + SITE_TEXT.delivery + ' - ' + added.toFixed(0) + ' t', true);
   }
 
   /** Top the ball charging hopper back up. Costed as the steel is worn away. */
@@ -299,7 +347,8 @@ export class Plant {
     if (added < 0.5) return;
     this.mediaStock = ORE.hopperCap;
     this.alarm('media-fill', 'info',
-      'Grinding media delivered - ' + added.toFixed(0) + ' t to the ball hopper', true);
+      SITE_TEXT.mediaThing[0].toUpperCase() + SITE_TEXT.mediaThing.slice(1) + ' delivered '
+      + SITE_TEXT.delivery + ' - ' + added.toFixed(0) + ' t', true);
   }
 
   clearBlockage() {
@@ -378,7 +427,8 @@ export class Plant {
     // hopper run empty and the charge itself starts to go: the mill draws
     // less power and loses its top size, so the product creeps coarser -
     // and a coarse grind leaves the sulphides locked up in the tailings.
-    const mediaRate = this.hardMode && run
+    const grinding = ORE.source === 'mill' || ORE.source === 'scoop';
+    const mediaRate = this.hardMode && run && grinding
       ? mediaDraw(this.up.millFeed, spec.specificEnergy) : 0;
     const mediaWanted = mediaRate * dtH;
     const mediaFed = Math.min(this.mediaStock, mediaWanted);
@@ -394,16 +444,17 @@ export class Plant {
         (mediaStarved ? 16 : 4) * 3600, dt), 0, 1);
 
       this.cost.upstream += upstreamCost(spec, this.up) * dtH;
-      this.cond('media-low', this.mediaStock < ORE.hopperCap * 0.18 && run, 'warn',
-        'Ball hopper low - order grinding media before the charge runs down',
-        'Ball hopper replenished');
+      this.cond('media-low', grinding && this.mediaStock < ORE.hopperCap * 0.18 && run, 'warn',
+        SITE_TEXT.media + ' low - order ' + SITE_TEXT.mediaThing + ' before it runs out',
+        SITE_TEXT.media + ' replenished');
       this.cond('media-out', mediaStarved, 'trip',
-        'BALL CHARGE RUNNING DOWN - no media in the hopper. The grind will '
-        + 'coarsen, the sulphides will stop floating and the binder will not set.',
-        'Ball charging restored');
-      this.cond('liberation', spec.liberation < 0.8 && run, 'warn',
+        SITE_TEXT.media.toUpperCase() + ' EMPTY - the ' + SITE_TEXT.mediaThing + ' is wearing out '
+        + 'and not being replaced. The grind will coarsen from here.',
+        SITE_TEXT.media + ' restored');
+      this.cond('liberation', ORE.source === 'mill' && spec.liberation < 0.8 && run, 'warn',
         'Grind at P80 ' + spec.p80.toFixed(0) + ' um - only '
-        + (spec.liberation * 100).toFixed(0) + '% of the sulphide is liberated',
+        + (spec.liberation * 100).toFixed(0) + '% of the '
+        + (ORE.separation === 'magnetic' ? 'metal' : 'sulphide') + ' is liberated',
         'Grind back in the liberation window');
       this.cond('supply-short', run && available < DESIGN.plantCapacity * 0.92, 'warn',
         'Tailings supply short at ' + available.toFixed(0) + ' t/h - the plant can take '
@@ -411,111 +462,191 @@ export class Plant {
         'Tailings supply back up to plant capacity');
       this.cond('sulphide-high', spec.sulphide > 0.9 && this.up.binderType === 'opc', 'warn',
         'Tailings at ' + spec.sulphide.toFixed(2) + '% S on ordinary portland - sulphate '
-        + 'attack will eat the 28 day strength. Lift the frother or move to a slag blend.',
+        + 'attack will eat the 28 day strength. '
+        + (ORE.separation === 'flotation' ? 'Lift the frother or move to a slag blend.' : 'Move to a slag blend.'),
         'Sulphide risk cleared');
     }
 
-    // ================= 2. Thickener ======================================
+    // ================= 2. Dewatering =====================================
+    // How the tailings lose their water depends on where the plant is. A
+    // thickener settles them and buffers them in its bed. A cyclone bank or a
+    // decanter centrifuge does it inline: no bed, no rakes, and whatever it
+    // does not send on goes straight back out with the overflow. A dry feed -
+    // crushed waste - has no water to take out at all, and goes straight to
+    // the bin.
+    const dw = DESIGN.dewater;
+    const inline = dw === 'cyclones' || dw === 'centrifuge';
     const area = (Math.PI * DESIGN.thickenerDia ** 2) / 4;
 
     // Flocculant buys both settling flux and achievable underflow density.
+    // On a centrifuge it is polymer, and it buys cake solids and a cleaner
+    // centrate. A cyclone takes no reagent and simply tops out.
     const floc = clamp(sp.flocDose, 0, 45);
-    const riseLimit = clamp(0.55 + 0.095 * floc, 0.55, 3.6);
-    const maxUfCw = clamp(0.545 + 0.0062 * floc, 0.545, 0.72);
-    const ufCwTarget = Math.min(sp.ufCw, maxUfCw);
-    this.ufCwActual = approach(this.ufCwActual, ufCwTarget, 120, dt);
-    const rhoUf = densityFromCw(this.ufCwActual);
+    const riseLimit = dw === 'thickener' ? clamp(0.55 + 0.095 * floc, 0.55, 3.6) : 0;
+    const maxUfCw = dw === 'cyclones' ? 0.60
+      : dw === 'centrifuge' ? clamp(0.56 + 0.0028 * floc, 0.56, 0.68)
+      : dw === 'dry' ? 1
+      : clamp(0.545 + 0.0062 * floc, 0.545, 0.72);
 
-    // The plate press is the real pull on the surge tank, so draw it first.
-    const capacity = this.filterCapacity();
-    const moisture = this.cakeMoisture();
-    const cakeCw = 1 - moisture / 100;
-    const ufDryAvailable = dtH > 0 ? (this.ufVol * rhoUf * this.ufCwActual) / dtH : capacity;
-
-    // The press works to hold the cake bin around mid-range rather than
-    // running flat out, so it modulates with the mixer's draw the way a real
-    // press does instead of pinning the bin full and backing the circuit up.
     const binSp = 0.55 * DESIGN.cakeBinCap;
     const binMakeUp = Math.max(0, (binSp - this.cakeMass) / 0.5); // t/h wet, 30 min pull-up
-    const dryDemand = (this.lastCakeDraw + binMakeUp) * cakeCw;
 
-    const throughput = run
-      ? Math.max(0, Math.min(capacity, dryDemand, ufDryAvailable, this.cakeBinHeadroomDry(dtH)))
-      : 0;
-    const cake = stream(throughput, (throughput * (1 - cakeCw)) / cakeCw, 0);
-    const ufWetDrawn = throughput / Math.max(this.ufCwActual, 1e-6);  // t/h wet slurry
-    const drawVol = ufWetDrawn / rhoUf;                               // m3/h
-    this.ufVol = clamp(this.ufVol - drawVol * dtH, 0, DESIGN.ufTankVol);
-    const filtrate = stream(0, Math.max(0, ufWetDrawn - totalMass(cake)), 0);
+    let capacity: number, moisture: number, cakeCw: number, throughput: number;
+    let cake: Stream, filtrate: Stream = EMPTY, underflow: Stream = EMPTY, overflow: Stream = EMPTY;
+    let ufDry = 0, solidsLost = 0, clarity = 20, overload = 0, riseRate = 0;
+    let surgeSpill = 0, bedPct = 0, excess = 0;
 
-    // The underflow pump then runs on surge-tank level control, not flat out -
-    // so when the press backs off, the thickener bed is what starts to build.
-    const levelSp = 0.62 * DESIGN.ufTankVol;
-    const makeUp = Math.max(0, (levelSp - this.ufVol) / (10 / 60)); // restore over 10 min, m3/h
-    const ufVolWanted = run ? drawVol + makeUp : 0;
-    const ufDryWanted = ufVolWanted * rhoUf * this.ufCwActual;
-    const bedAvailable = dtH > 0 ? this.bed / dtH : ufDryWanted;
-    const ufDry = Math.max(0, Math.min(ufDryWanted, bedAvailable, this.ufTankHeadroomDry(dtH)));
-    const underflow = stream(ufDry, (ufDry * (1 - this.ufCwActual)) / this.ufCwActual, 0);
+    if (dw === 'dry') {
+      // The loaders only scoop what the bin will take; the rest stays in the
+      // piles, where it has been for a very long time already.
+      moisture = DESIGN.dryMoisture;
+      cakeCw = 1 - moisture / 100;
+      capacity = feedSolids;
+      const dryDemand = (this.lastCakeDraw + binMakeUp) * cakeCw;
+      throughput = run
+        ? Math.max(0, Math.min(capacity, dryDemand, this.cakeBinHeadroomDry(dtH)))
+        : 0;
+      cake = stream(throughput, (throughput * (1 - cakeCw)) / cakeCw, 0);
+      excess = Math.max(0, feedSolids - throughput);
+      this.ufVol = 0;
+      this.bed = 0;
+      this.torque = 0;
+      this.ufCwActual = cakeCw;
+    } else {
+      const ufCwTarget = Math.min(sp.ufCw, maxUfCw);
+      this.ufCwActual = approach(this.ufCwActual, ufCwTarget, 120, dt);
+      const rhoUf = densityFromCw(this.ufCwActual);
 
-    const ufRaw = this.ufVol + volFlow(underflow) * dtH;
-    let surgeSpill = 0;
-    if (ufRaw > DESIGN.ufTankVol) {
-      surgeSpill = dtH > 0 ? (ufRaw - DESIGN.ufTankVol) / dtH : 0;
-      this.spilledM3 += (ufRaw - DESIGN.ufTankVol);
-      this.cost.spill += (ufRaw - DESIGN.ufTankVol) * DESIGN.costSpill;
+      // The plate press is the real pull on the surge tank, so draw it first.
+      capacity = this.filterCapacity();
+      moisture = this.cakeMoisture();
+      cakeCw = 1 - moisture / 100;
+      const ufDryAvailable = dtH > 0 ? (this.ufVol * rhoUf * this.ufCwActual) / dtH : capacity;
+
+      // The press works to hold the cake bin around mid-range rather than
+      // running flat out, so it modulates with the mixer's draw the way a real
+      // press does instead of pinning the bin full and backing the circuit up.
+      const dryDemand = (this.lastCakeDraw + binMakeUp) * cakeCw;
+
+      throughput = run
+        ? Math.max(0, Math.min(capacity, dryDemand, ufDryAvailable, this.cakeBinHeadroomDry(dtH)))
+        : 0;
+      cake = stream(throughput, (throughput * (1 - cakeCw)) / cakeCw, 0);
+      const ufWetDrawn = throughput / Math.max(this.ufCwActual, 1e-6);  // t/h wet slurry
+      const drawVol = ufWetDrawn / rhoUf;                               // m3/h
+      this.ufVol = clamp(this.ufVol - drawVol * dtH, 0, DESIGN.ufTankVol);
+      filtrate = stream(0, Math.max(0, ufWetDrawn - totalMass(cake)), 0);
+
+      // The underflow pump then runs on surge-tank level control, not flat out -
+      // so when the press backs off, the thickener bed is what starts to build.
+      const levelSp = 0.62 * DESIGN.ufTankVol;
+      const makeUp = Math.max(0, (levelSp - this.ufVol) / (10 / 60)); // restore over 10 min, m3/h
+      const ufVolWanted = run ? drawVol + makeUp : 0;
+      const ufDryWanted = ufVolWanted * rhoUf * this.ufCwActual;
+
+      if (inline) {
+        // Fines always leave with the overflow. A cyclone pushed to a denser
+        // underflow sends more of them; a centrifuge sends fewer the more
+        // polymer it gets. With no bed to hold the rest, whatever the surge
+        // tank cannot take is bypassed back where it came from.
+        const lossFrac = dw === 'cyclones'
+          ? clamp(0.006 + 0.2 * Math.max(0, this.ufCwActual - 0.50), 0.006, 0.05)
+          : clamp(0.032 - 0.0006 * floc, 0.006, 0.032);
+        solidsLost = feedSolids * lossFrac;
+        const avail = Math.max(0, feedSolids - solidsLost);
+        ufDry = Math.max(0, Math.min(ufDryWanted, avail, this.ufTankHeadroomDry(dtH)));
+        excess = avail - ufDry;
+        this.bed = 0;
+        // a decanter's scroll torque climbs with the cake it is asked to make
+        this.torque = approach(this.torque, dw === 'centrifuge' && run
+          ? 30 + 420 * Math.max(0, this.ufCwActual - 0.56) : 0, 30, dt);
+      } else {
+        const bedAvailable = dtH > 0 ? this.bed / dtH : ufDryWanted;
+        ufDry = Math.max(0, Math.min(ufDryWanted, bedAvailable, this.ufTankHeadroomDry(dtH)));
+      }
+      underflow = stream(ufDry, (ufDry * (1 - this.ufCwActual)) / this.ufCwActual, 0);
+
+      const ufRaw = this.ufVol + volFlow(underflow) * dtH;
+      if (ufRaw > DESIGN.ufTankVol) {
+        surgeSpill = dtH > 0 ? (ufRaw - DESIGN.ufTankVol) / dtH : 0;
+        this.spilledM3 += (ufRaw - DESIGN.ufTankVol);
+        this.cost.spill += (ufRaw - DESIGN.ufTankVol) * DESIGN.costSpill;
+      }
+      this.ufVol = clamp(ufRaw, 0, DESIGN.ufTankVol);
+      this.cond('surge-spill', surgeSpill > 0.5, 'trip',
+        'U/F SURGE TANK OVERFLOWING - thickened tailings going to ' + SITE_TEXT.spillTo,
+        'Surge tank overflow stopped');
+
+      if (inline) {
+        const feedWaterPerDry = (1 - spec.cw) / spec.cw;
+        const ofWater = Math.max(0, feed.water - underflow.water - excess * feedWaterPerDry);
+        overflow = stream(solidsLost, ofWater, 0);
+        clarity = 20 + (solidsLost / Math.max(ofWater, 1)) * 1e6;
+        // what goes out with the overflow is somebody else's problem, and it
+        // is billed: plume on the seabed, lost fines anywhere else
+        this.cost.spill += solidsLost * dtH * DESIGN.costPlume;
+        this.cond('plume', run && solidsLost > feedSolids * 0.02, 'warn',
+          'Fines leaving with the overflow at ' + solidsLost.toFixed(1) + ' t/h - '
+          + (dw === 'cyclones' ? 'the cyclone underflow is set too dense'
+            : 'more polymer, or ease the cake solids off'),
+          'Overflow fines back under control');
+        this.cond('uf-limited', sp.ufCw > maxUfCw + 0.002, 'info',
+          (dw === 'cyclones' ? 'Cyclone underflow tops out at ' : 'Decanter cake capped at ')
+          + (maxUfCw * 100).toFixed(1) + '%',
+          'Underflow density setpoint now achievable');
+      } else {
+        // Overflow is the balance. If the rise rate beats the settling flux the
+        // bed floats and solids report over the launder.
+        const overflowVol = Math.max(0, volFlow(feed) - volFlow(underflow));
+        riseRate = overflowVol / area;
+        overload = clamp((riseRate - riseLimit) / Math.max(riseLimit, 0.1), 0, 1.5);
+        solidsLost = feedSolids * clamp(overload * 0.55, 0, 0.5);
+        clarity = 20 + overload * 5200;
+        overflow = stream(
+          solidsLost,
+          Math.max(0, totalMass(feed) - totalMass(underflow) - solidsLost),
+          0,
+        );
+
+        this.bed = clamp(this.bed + (feedSolids - solidsLost - ufDry) * dtH, 0, DESIGN.thickenerBedMax * 1.15);
+
+        bedPct = (this.bed / DESIGN.thickenerBedMax) * 100;
+        const torqueTarget = run ? 28 + 300 * Math.max(0, this.ufCwActual - 0.55) + 0.32 * bedPct : 18;
+        this.torque = approach(this.torque, torqueTarget, 30, dt);
+
+        this.cond('rake-trip', this.torque > 92, 'trip',
+          'Rake torque ' + this.torque.toFixed(0) + '% - back the underflow density off',
+          'Rake torque back within limits');
+        this.cond('rake-high', this.torque > 78 && this.torque <= 92, 'warn',
+          'Rake torque high at ' + this.torque.toFixed(0) + '%',
+          'Rake torque normal');
+        this.cond('thk-rise', overload > 0.05, 'warn',
+          'Bed rising - overflow at ' + clarity.toFixed(0) + ' mg/L, add flocculant',
+          'Overflow clarity recovered');
+        this.cond('thk-bed', bedPct > 96, 'warn',
+          'Thickener bed near capacity', 'Thickener bed drawn down');
+        this.cond('uf-limited', sp.ufCw > maxUfCw + 0.002, 'info',
+          'Underflow density capped at ' + (maxUfCw * 100).toFixed(1) + '% by flocculant dose',
+          'Underflow density setpoint now achievable');
+      }
     }
-    this.ufVol = clamp(ufRaw, 0, DESIGN.ufTankVol);
-    this.cond('surge-spill', surgeSpill > 0.5, 'trip',
-      'U/F SURGE TANK OVERFLOWING - thickened tailings going to the pad',
-      'Surge tank overflow stopped');
-
-    // Overflow is the balance. If the rise rate beats the settling flux the
-    // bed floats and solids report over the launder.
-    const overflowVol = Math.max(0, volFlow(feed) - volFlow(underflow));
-    const riseRate = overflowVol / area;
-    const overload = clamp((riseRate - riseLimit) / Math.max(riseLimit, 0.1), 0, 1.5);
-    const solidsLost = feedSolids * clamp(overload * 0.55, 0, 0.5);
-    const clarity = 20 + overload * 5200;
-    const overflow = stream(
-      solidsLost,
-      Math.max(0, totalMass(feed) - totalMass(underflow) - solidsLost),
-      0,
-    );
-
-    this.bed = clamp(this.bed + (feedSolids - solidsLost - ufDry) * dtH, 0, DESIGN.thickenerBedMax * 1.15);
-
-    const bedPct = (this.bed / DESIGN.thickenerBedMax) * 100;
-    const torqueTarget = run ? 28 + 300 * Math.max(0, this.ufCwActual - 0.55) + 0.32 * bedPct : 18;
-    this.torque = approach(this.torque, torqueTarget, 30, dt);
-
-    this.cond('rake-trip', this.torque > 92, 'trip',
-      'Rake torque ' + this.torque.toFixed(0) + '% - back the underflow density off',
-      'Rake torque back within limits');
-    this.cond('rake-high', this.torque > 78 && this.torque <= 92, 'warn',
-      'Rake torque high at ' + this.torque.toFixed(0) + '%',
-      'Rake torque normal');
-    this.cond('thk-rise', overload > 0.05, 'warn',
-      'Bed rising - overflow at ' + clarity.toFixed(0) + ' mg/L, add flocculant',
-      'Overflow clarity recovered');
-    this.cond('thk-bed', bedPct > 96, 'warn',
-      'Thickener bed near capacity', 'Thickener bed drawn down');
-    this.cond('uf-limited', sp.ufCw > maxUfCw + 0.002, 'info',
-      'Underflow density capped at ' + (maxUfCw * 100).toFixed(1) + '% by flocculant dose',
-      'Underflow density setpoint now achievable');
+    this.lastExcess = excess;
 
     this.rakeAngle += dt * 0.0105 * (run ? 1 : 0.15); // ~10 min per revolution
 
     // ================= 3. Plate press cycle + cake bin ===================
-    this.cond('uf-low', run && this.ufVol < 8, 'warn',
-      'Underflow surge tank low - the press is out-running the thickener',
-      'Underflow surge tank recovered');
+    if (dw !== 'dry') {
+      this.cond('uf-low', run && this.ufVol < 8, 'warn',
+        'Underflow surge tank low - the press is out-running the '
+          + (dw === 'thickener' ? 'thickener' : dw === 'cyclones' ? 'cyclones' : 'centrifuge'),
+        'Underflow surge tank recovered');
 
-    // A press with nothing to filter does not keep shuttling its plates. Stop
-    // the plant and the pack holds wherever the cycle had got to, which is
-    // also what you come back to when you start it again.
-    if (run && sp.cycleTime > 0) {
-      this.cyclePhase = (this.cyclePhase + dt / (sp.cycleTime * 60)) % 1;
+      // A press with nothing to filter does not keep shuttling its plates. Stop
+      // the plant and the pack holds wherever the cycle had got to, which is
+      // also what you come back to when you start it again.
+      if (run && sp.cycleTime > 0) {
+        this.cyclePhase = (this.cyclePhase + dt / (sp.cycleTime * 60)) % 1;
+      }
     }
     const pressing = this.cyclePhase < 0.78;
 
@@ -545,7 +676,7 @@ export class Plant {
     const eta = plasticViscosity(pcv);
     const slumpAchieved = slump(tauY, pasteRho);
     const slumpCone = coneSlump(tauY, pasteRho);
-    const ucs = ucs28(binderPct, Cw(recipe)) * this.feedFx.ucs;
+    const ucs = ucs28(binderPct, Cw(recipe)) * this.feedFx.ucs * DESIGN.cureFactor;
 
     // ================= 5. Pump pull ======================================
     // A positive-displacement pump will deliver whatever the line asks for
@@ -574,6 +705,7 @@ export class Plant {
     this.siloMass = clamp(this.siloMass - binderRate * dtH, 0, DESIGN.siloCap);
 
     this.cost.binder += binderRate * dtH * this.binderPrice();
+    this.cost.water += paste.water * dtH * DESIGN.costWaterLost;
     this.cost.floc += feedSolids * floc * 1e-6 * dtH * DESIGN.costFloc;
 
     // ---- process water balance ------------------------------------------
@@ -587,13 +719,15 @@ export class Plant {
     const toMill = clamp(wantExport, 0, DESIGN.millReturnCap);
 
     this.pwVol += (recovered - mixWater - toMill) * dtH;
+    if (DESIGN.dewater === 'dry') this.pwVol += mixWater * dtH;   // the tanker keeps it topped
     let waterSpill = 0;
     if (this.pwVol > DESIGN.pwTankVol) {
       waterSpill = dtH > 0 ? (this.pwVol - DESIGN.pwTankVol) / dtH : 0;
       this.pwVol = DESIGN.pwTankVol;
     }
     // if the tank runs dry the mixer has to buy raw make-up water
-    const rawMakeUp = this.pwVol < 0 ? Math.min(mixWater, -this.pwVol / Math.max(dtH, 1e-9)) : 0;
+    const rawMakeUp = DESIGN.dewater === 'dry' ? mixWater
+      : this.pwVol < 0 ? Math.min(mixWater, -this.pwVol / Math.max(dtH, 1e-9)) : 0;
     this.pwVol = Math.max(0, this.pwVol);
 
     this.spilledM3 += waterSpill * dtH;
@@ -604,7 +738,7 @@ export class Plant {
       'Process water tank high - the mill will not take any more back',
       'Process water tank back in band');
     this.cond('pw-spill', waterSpill > 0.5, 'trip',
-      'PROCESS WATER OVERFLOWING to the pad - ' + waterSpill.toFixed(0) + ' m3/h',
+      'PROCESS WATER OVERFLOWING to ' + SITE_TEXT.spillTo + ' - ' + waterSpill.toFixed(0) + ' m3/h',
       'Process water overflow stopped');
 
     this.cond('silo-low', this.siloMass < 25, 'warn',
@@ -626,7 +760,7 @@ export class Plant {
       actualFlow,
       Math.max(60, DESIGN.pipeId - this.wallLoss * 2),
       DESIGN.pipeLength, DESIGN.pipeDrop,
-      tauY, eta, pasteRho,
+      tauY, eta, pasteRho, DESIGN.gravity,
     );
 
     const pressureNeed = Math.max(0, pipe.pumpPressure);
@@ -668,7 +802,8 @@ export class Plant {
 
     // shaft power, kW = Q[m3/s] * dP[kPa] / efficiency
     const power = ((Math.max(actualFlow, 0) / 3600) * this.smPressure) / 0.82;
-    this.cost.power += (power + (run ? DESIGN.auxPowerKw : 40)) * dtH * DESIGN.costPowerKwh;
+    this.cost.power += (power + (run ? DESIGN.auxPowerKw + DESIGN.dewaterPowerKw : 40))
+      * dtH * DESIGN.costPowerKwh;
 
     this.wallLoss += wearRate(pipe.velocity, pcv) * dtH * 0.004;
     this.cond('wear', this.wallLoss > DESIGN.pipeWallMm * 0.6, 'warn',
@@ -688,7 +823,7 @@ export class Plant {
       this.ucsSum += ucs * v;
       this.ucsMin = Math.min(this.ucsMin, ucs);
       complete = this.stopeVol >= DESIGN.stopeVolume - 0.5;
-      if (complete) this.alarm('done', 'info', 'Stope full - placement complete', true);
+      if (complete) this.alarm('done', 'info', SITE_TEXT.done, true);
     }
 
     // ================= telemetry =========================================
@@ -767,7 +902,7 @@ export class Plant {
         hard: this.hardMode,
         binderType: this.up.binderType,
         effects: fx,
-        bypassToTsf: bypassToTsf,
+        bypassToTsf: bypassToTsf + this.lastExcess,
         plantCapacity: DESIGN.plantCapacity,
       },
       media: {
@@ -815,7 +950,7 @@ export class Plant {
   private flowAtPressureLimit(tauY: number, eta: number, rho: number): number {
     const dia = Math.max(60, DESIGN.pipeId - this.wallLoss * 2);
     const at = (q: number) =>
-      pipeline(q, dia, DESIGN.pipeLength, DESIGN.pipeDrop, tauY, eta, rho).pumpPressure;
+      pipeline(q, dia, DESIGN.pipeLength, DESIGN.pipeDrop, tauY, eta, rho, DESIGN.gravity).pumpPressure;
 
     if (at(0) > DESIGN.pumpMaxPressure) return 0;
     if (at(DESIGN.pumpMaxFlow) <= DESIGN.pumpMaxPressure) return DESIGN.pumpMaxFlow;
@@ -831,7 +966,7 @@ export class Plant {
 
   /** Binder price depends on the blend: slag costs more but resists sulphates. */
   private binderPrice(): number {
-    return this.up.binderType === "slag" ? 175 : DESIGN.costBinder;
+    return DESIGN.costBinder * (this.up.binderType === 'slag' ? DESIGN.slagPremium : 1);
   }
 
   /** Dry throughput the press can hold, t/h - falls off as sqrt(cycle time). */

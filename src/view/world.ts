@@ -4,7 +4,7 @@ import { DESIGN } from '../sim/plant';
 import { C, metal, matte, glass, glow, liquor } from './palette';
 import {
   box, cyl, tube, strip, platform, railing, ladder, bands, ribs,
-  pipeRun, pipeSupport, LevelBar, Beacon, Tag,
+  pipeRun, pipeSupport, plinth, LevelBar, Beacon, Tag,
 } from './parts';
 import { flowMaterial, setFlow, tickFlows, bandsFor, FlowMaterial } from './flow';
 import { FX, Spout } from './particles';
@@ -13,6 +13,17 @@ import { Unit, Thickener, SurgeTank, PlatePress, CakeBin, BinderSilo, Mixer, Pas
 import { buildGround, Underground, PasteLine, scaleFigure, CUT_X } from './terrain';
 import { UpstreamCircuit } from './upstream';
 import { RoomDecor } from './room';
+import type { Scenario, WorldKind } from '../scenario/types';
+import type { Dressing } from './worlds/common';
+import { buildSpace, LaunchFeed, MassDriver, PIT_HOLE } from './worlds/space';
+import { buildOcean, SeafloorLine, Furrow, FURROW_HOLE } from './worlds/ocean';
+import { buildCity } from './worlds/city';
+import { buildWaste, FillLine, Craters, CRATER_HOLE } from './worlds/waste';
+import { CycloneBank, Centrifuge } from './dewater';
+import { CollectorFront, ReclaimFront, ScoopFront } from './fronts';
+import { sheet, type Sheet } from '../scenario/flowsheet';
+import { Deliveries } from './deliveries';
+import { UP } from './upstream';
 import { Stage } from './scene';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -152,11 +163,84 @@ class WaterTank extends Unit {
       spill > 0.5 ? 'SPILL' : f * 100 > 99 ? 'FULL' : (w.pct).toFixed(0) + '%',
       spill > 0.5
         ? spill.toFixed(0) + ' m3/h to the pad'
+        : w.returnCap >= 1e5 ? w.toMill.toFixed(0) + ' m3/h back, closed loop'
         : w.toMill.toFixed(0) + ' / ' + w.returnCap.toFixed(0) + ' m3/h to mill',
       spill > 0.5 ? 'trip' : f > 0.88 ? 'warn' : 'ok',
     );
   }
 }
+
+/** A work-class ROV: yellow box, thrusters, two lamps. What passes for staff down here. */
+function rov(): THREE.Group {
+  const g = new THREE.Group();
+  const body = box(1.8, 1.0, 1.2, metal(0xe0b830, 0.5, 0.4));
+  g.add(body);
+  const frame = box(1.9, 0.2, 1.3, metal(C.steelDark));
+  frame.position.y = -0.55;
+  g.add(frame);
+  for (const z of [-0.75, 0.75]) {
+    const th = cyl(0.22, 0.22, 0.5, metal(C.steelDark), 10);
+    th.rotation.z = Math.PI / 2;
+    th.position.set(-0.8, 0.2, z);
+    g.add(th);
+  }
+  for (const z of [-0.35, 0.35]) {
+    const l = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), glow(0xfff0c8, 3));
+    l.position.set(0.92, 0.1, z);
+    g.add(l);
+  }
+  return g;
+}
+
+/**
+ * The pressure sphere the control room sits in at 4,400 m. From the chair
+ * you see its frame through the window, and whatever is swimming past it.
+ */
+function pressureSphere(): THREE.Group {
+  const g = new THREE.Group();
+  const R = 9.6;
+  const skin = new THREE.Mesh(
+    new THREE.SphereGeometry(R, 40, 24, 0, Math.PI * 2, 0, Math.PI * 0.6),
+    new THREE.MeshStandardMaterial({
+      color: 0xbfe6ff, transparent: true, opacity: 0.07, roughness: 0.05, metalness: 0.2,
+      side: THREE.DoubleSide, depthWrite: false,
+    }),
+  );
+  g.add(skin);
+  // only the part of the frame above the seabed
+  const edges = new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(R, 2));
+  const pos = edges.attributes.position as THREE.BufferAttribute;
+  const keep: number[] = [];
+  for (let i = 0; i < pos.count; i += 2) {
+    if (pos.getY(i) > -2.9 && pos.getY(i + 1) > -2.9) {
+      keep.push(pos.getX(i), pos.getY(i), pos.getZ(i), pos.getX(i + 1), pos.getY(i + 1), pos.getZ(i + 1));
+    }
+  }
+  const fg = new THREE.BufferGeometry();
+  fg.setAttribute('position', new THREE.Float32BufferAttribute(keep, 3));
+  g.add(new THREE.LineSegments(fg, new THREE.LineBasicMaterial({
+    color: 0x7fb8d4, transparent: true, opacity: 0.35,
+  })));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(R * 0.96, 0.45, 10, 64), metal(C.steelDark, 0.5, 0.8));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = -2.9;
+  g.add(ring);
+  const lit = new THREE.Mesh(new THREE.TorusGeometry(R * 0.96, 0.08, 6, 64), glow(C.cyan, 1.4));
+  lit.rotation.x = Math.PI / 2;
+  lit.position.y = -2.4;
+  g.add(lit);
+  g.position.y = 3.2;
+  return g;
+}
+
+/** Plot plan: where the units that other things have to reach are standing. */
+const SITE = {
+  surge: { x: -30, z: 7 },
+  cakeBin: { x: 2 },
+  mixer: { x: 17 },
+  silo: { x: 6, z: -17 },
+  water: { x: -2, z: 17 },
+};
 
 /** Where the control room stands, and where the operator sits inside it. */
 export const CONTROL = {
@@ -185,10 +269,11 @@ class ControlRoom extends Unit {
   private deskGlow: THREE.MeshStandardMaterial;
   private aerial: THREE.Mesh;
   private monitors = new THREE.Group();
-  private decor = new RoomDecor();
+  private decor: RoomDecor;
 
-  constructor() {
+  constructor(scenario: Scenario) {
     super('CONTROL ROOM', 2.4, '#35e0d0');
+    this.decor = new RoomDecor(scenario.look.world);
     const g = this.group;
 
     const plinth = box(12.5, 1.1, 8.0, matte(0x252b34, 0.95));
@@ -306,6 +391,7 @@ class ControlRoom extends Unit {
     g.add(this.aerial);
 
     g.add(this.decor.group);
+    if (scenario.look.bubble) g.add(pressureSphere());
 
     const lamp = new THREE.PointLight(0x8fe8ff, 26, 18, 2);
     lamp.position.set(0, 4.9, 0.4);
@@ -354,12 +440,24 @@ export class World {
   private pickables: THREE.Object3D[] = [];
   private outline: THREE.BoxHelper | null = null;
   fx = new FX();
-  private underground: Underground;
-  private upstreamCircuit: UpstreamCircuit;
+  private underground: Underground | null = null;
+  private dressing: Dressing | null = null;
+  private rovs: THREE.Object3D[] = [];
+  private deliveries: Deliveries;
+  private clock = 0;
   selected: Unit | null = null;
 
-  constructor(private stage: Stage) {
-    this.root.add(buildGround());
+  constructor(private stage: Stage, readonly scenario: Scenario) {
+    const look = scenario.look;
+    stage.applyLook(look);
+    const sh = sheet();
+    this.root.add(buildGround(
+      { ...look.ground, wet: look.world === 'city' },
+      look.destination === 'trench' ? [FURROW_HOLE]
+        : look.destination === 'craters' ? [CRATER_HOLE]
+        : look.world === 'space' ? [PIT_HOLE] : [],
+      look.world === 'space' ? 1200 : 300,
+    ));
 
     const place = (u: Unit, x: number, z: number) => {
       u.group.position.set(x, 0, z);
@@ -373,30 +471,103 @@ export class World {
       return u;
     };
 
-    place(new Thickener(), -52, 0);
-    place(new SurgeTank(this.fx), -30, 7);
-    place(new PlatePress(), -10, 0);
-    place(new CakeBin(), 2, 0);
-    place(new BinderSilo(), 6, -17);
-    place(new Mixer(), 17, 0);
-    place(new PastePump(), 28, 0);
-    place(new WaterTank(this.fx), -2, 17);
-    place(new ControlRoom(), CONTROL.x, CONTROL.z);
-    place(new PasteLine(), 0, 0);
-    this.upstreamCircuit = new UpstreamCircuit(this.fx);
-    place(this.upstreamCircuit, 0, 0);
-    this.upstreamCircuit.setVisible(false);
+    // The back end of the plant is placed off the mixer, not by eye: the pump
+    // hopper sits under the mixer's discharge gate, the cake belt and the
+    // binder screw both land on its feed hood, and the paste line picks up
+    // where the pump's discharge spool ends.
+    const MIX = SITE.mixer;
+    const hood = V(MIX.x + Mixer.FEED_X, Mixer.DECK + 4.6, 0);
+    const pumpX = MIX.x + Mixer.DISCHARGE_X - PastePump.HOPPER_X;
 
-    this.underground = new Underground();
-    place(this.underground, 0, 0);
+    // Dewatering is whatever this site can use: a thickener where there is
+    // gravity to settle in, cyclones on the seabed, decanters on an asteroid -
+    // and nothing at all where the feed is dry. No dewatering, no surge tank,
+    // no press.
+    let ofStart = V(-52 + DESIGN.thickenerDia / 2 + 3.4 + 2.75, 5.8, 0);
+    if (sh.dewater === 'thickener') place(new Thickener(), -52, 0);
+    else if (sh.dewater === 'cyclones') {
+      const u = place(new CycloneBank(), -52, 0) as CycloneBank;
+      ofStart = u.ofOut.clone().add(V(-52, 0, 0));
+    } else if (sh.dewater === 'centrifuge') {
+      const u = place(new Centrifuge(), -52, 0) as Centrifuge;
+      ofStart = u.ofOut.clone().add(V(-52, 0, 0));
+    }
+    if (sh.hasSurge) place(new SurgeTank(this.fx), SITE.surge.x, SITE.surge.z);
+    if (sh.hasPress) place(new PlatePress(), -10, 0);
+    place(new CakeBin(hood.clone().sub(V(SITE.cakeBin.x, 0, 0))), SITE.cakeBin.x, 0);
+    place(new BinderSilo(V(hood.x - 0.6 - SITE.silo.x, hood.y - 0.7, -1.3 - SITE.silo.z)),
+      SITE.silo.x, SITE.silo.z);
+    place(new Mixer(), MIX.x, 0);
+    place(new PastePump(), pumpX, 0);
+    place(new WaterTank(this.fx), SITE.water.x, SITE.water.z);
+    place(new ControlRoom(scenario), CONTROL.x, CONTROL.z);
+    // and where the feed comes from
+    switch (sh.source) {
+      case 'collector': place(new CollectorFront(this.fx), 0, 0); break;
+      case 'reclaim': place(new ReclaimFront(this.fx), 0, 0); break;
+      case 'scoop': place(new ScoopFront(this.fx, SITE.cakeBin.x), 0, 0); break;
+      default: place(new UpstreamCircuit(this.fx, { magnetic: sh.separation === 'magnetic' }), 0, 0);
+    }
 
-    this.buildLinks();
-    this.buildSiteDressing();
+    // Where the paste goes is the one part of the flowsheet that changes from
+    // world to world. Every destination is the unit with id 'stope' and every
+    // line to it is 'pipeline', so the consoles never need to know which.
+    const outlet = pumpX + PastePump.OUTLET_X;
+    const names = scenario.names;
+    switch (look.destination) {
+      case 'launcher':
+        place(new LaunchFeed(outlet, names), 0, 0);
+        place(new MassDriver(names), 0, 0);
+        break;
+      case 'trench':
+        place(new SeafloorLine(outlet, names), 0, 0);
+        place(new Furrow(names), 0, 0);
+        break;
+      case 'craters':
+        place(new FillLine(outlet, names), 0, 0);
+        place(new Craters(names), 0, 0);
+        break;
+      default:
+        place(new PasteLine(outlet, names), 0, 0);
+        this.underground = new Underground(names);
+        place(this.underground, 0, 0);
+    }
+
+    this.buildLinks(sh, ofStart);
+    this.buildServices();
+
+    // Where a delivery lands: at the foot of the silo for a truck or a pad,
+    // over the top of it for anything that flies or is lowered.
+    const w = look.world;
+    const silo = V(SITE.silo.x, 0, SITE.silo.z);
+    const over = w === 'ocean' || w === 'city';
+    const binderAt = over ? silo.clone().setY(23)
+      : w === 'space' || w === 'waste' ? silo.clone().add(V(9, 0, -8)) : silo.clone();
+    const mediaAt = sh.source === 'scoop' ? V(-44, 0, -13)
+      : w === 'space' ? V(UP.millX + 8, 0, -20) : V(UP.millX + 8, 0, -8);
+    this.deliveries = new Deliveries(this.root, w, binderAt, mediaAt);
+    this.buildSiteDressing(look.world);
     this.root.add(this.fx.group);
+
+    switch (look.world) {
+      case 'space': this.dressing = buildSpace(this.root, stage.key); break;
+      case 'ocean': this.dressing = buildOcean(this.root); break;
+      case 'city': this.dressing = buildCity(this.root); break;
+      case 'waste': this.dressing = buildWaste(this.root); break;
+    }
+  }
+
+  /** Where the destination view flies to - different in every world. */
+  destinationView(): { at: THREE.Vector3; off: THREE.Vector3 } {
+    const u = this.byId.get('stope')!;
+    return {
+      at: u.group.localToWorld(u.focus.clone()),
+      off: u.viewOffset?.clone() ?? V(-40, 24, 60),
+    };
   }
 
   /** The interconnecting pipework that makes it read as one flowsheet. */
-  private buildLinks() {
+  private buildLinks(sh: Sheet, ofStart: THREE.Vector3) {
     const link = (
       kind: string, colour: number, radius: number, pts: THREE.Vector3[], intensity = 1.5,
     ) => {
@@ -409,38 +580,56 @@ export class World {
       this.linkKinds.push(kind);
     };
 
-    // mill tailings in from the west, high on a pipe bridge
-    link('feed', C.tails, 0.4, [
-      V(-84, 15, 0), V(-74, 15, 0), V(-66, 14.6, 0), V(-60, 13.2, 0),
-      V(-55, 11.4, 0), V(-52, 9.6, 0), V(-52, 8.2, 0),
+    // A dry feed arrives on the crusher's own belt; there is no slurry to pipe.
+    if (sh.dewater === 'dry') {
+      this.buildMakeup();
+      return;
+    }
+
+    // Tailings in from the west on the pipe bridge, then onto the dewatering.
+    // For a thickener that means down onto the bridge and along it to the
+    // feedwell, beside the drive house and into the feedwell off-centre.
+    link('feed', C.tails, 0.4, sh.dewater === 'cyclones' ? [
+      V(-84, 15, 0), V(-74, 15, 0), V(-62, 15, 0), V(-55.4, 14.8, 0), V(-52.4, 12.4, 0),
+    ] : sh.dewater === 'centrifuge' ? [
+      V(-84, 15, 0), V(-74, 15, 0), V(-64, 12.4, 0), V(-59, 8.4, 0), V(-57.6, 7.2, 0),
+    ] : [
+      V(-84, 15, 0), V(-74, 15, 0), V(-67, 14.6, -0.6), V(-63.4, 10.2, -1.6),
+      V(-58, 8.0, -1.6), V(-53.4, 8.0, -1.6), V(-52.9, 6.3, -1.6),
     ]);
-    // The west end is an anchor, not a loose end: in hard mode the transfer
-    // riser comes up beside it, in standard mode it reads as the battery limit.
-    for (const x of [-85.4, -80, -72, -64, -56]) {
-      const s = pipeSupport(14.6, 2.0);
+    // The west end is an anchor, not a loose end: the transfer riser from the
+    // front end comes up beside it. Nothing stands inside the tank - the last
+    // support is on the rim walkway, not in the liquor.
+    for (const [x, h] of [[-85.4, 14.6], [-80, 14.6], [-72, 14.6], [-66.5, 14.2]] as const) {
+      const s = pipeSupport(h, 2.0);
       s.position.set(x, 0, 0);
       this.root.add(s);
     }
 
-    // thickener underflow -> surge tank
+    // Thickener underflow -> surge tank, landing on the inlet nozzle at the
+    // edge of the roof. The middle of the roof is the agitator drive.
+    const sx = SITE.surge.x, sz = SITE.surge.z;
     link('uf', C.thickUf, 0.3, [
-      V(-52, 0.7, 0), V(-45, 0.9, 2), V(-42.5, 3, 6), V(-42.5, 13.5, 7),
-      V(-36, 14.2, 7), V(-30, 13.2, 7),
+      V(-52, 0.7, 0), V(-45, 0.9, 2), V(-42.5, 3, 6), V(-42.5, 14.2, 6.2),
+      V(sx - 5.2, 14.4, sz - 2.4), V(sx - 0.2, 14.4, sz - 2.4), V(sx, 13.0, sz - 2.4),
     ]);
 
     // surge tank -> press feed
-    link('press', C.thickUf, 0.26, [
+    if (sh.hasPress) link('press', C.thickUf, 0.26, [
       V(-30, 2.4, 7), V(-25, 2.2, 5), V(-20, 3.2, 0), V(-17, 6.4, -1.8), V(-13, 6.55, -1.8),
     ]);
 
-    // Thickener overflow and filtrate both run back to process water on an
-    // overhead rack rather than snaking across the pad at knee height.
+    // Thickener overflow runs back to process water on an overhead rack
+    // rather than across the pad at knee height. It picks up from the end of
+    // the launder downcomer, and goes round the south side of the surge tank -
+    // it used to run straight through it.
     const RACK = 9.6;
+    const o = ofStart;
     link('of', C.water, 0.26, [
-      V(-43.5, 5.2, 0), V(-40, RACK, 2), V(-34, RACK, 8), V(-24, RACK, 14),
-      V(-12, RACK, 17), V(-4.2, RACK, 17), V(-3.6, 7.2, 17),
+      o.clone(), V(o.x + 0.6, RACK, o.z + 0.6), V(o.x + 0.8, RACK, sz + 5.6),
+      V(-24, RACK, sz + 6), V(-12, RACK, 17), V(-4.2, RACK, 17), V(-3.6, 7.2, 17),
     ], 0.75);
-    for (const [x, z] of [[-34, 8], [-24, 14], [-12, 17]] as const) {
+    for (const [x, z] of [[o.x + 0.7, sz], [-26, sz + 5.9], [-12, 17]] as const) {
       const s = pipeSupport(RACK - 0.4, 1.4);
       s.position.set(x, 0, z);
       this.root.add(s);
@@ -451,27 +640,98 @@ export class World {
       V(-3.5, 6.4, 1.8), V(-2.0, 8.2, 6), V(-1.2, 8.4, 11), V(-1.6, 7.6, 14.2),
     ], 0.75);
 
-    // process water -> mixer make-up
-    link('makeup', C.water, 0.18, [
-      V(1.6, 6.4, 16), V(7, 9.5, 12), V(13, 12.6, 5), V(17, 13.3, -1.4),
-    ], 0.9);
-
-    // binder screw -> mixer
-    link('binder', C.binder, 0.3, [
-      V(6, 6.2, -17), V(9, 7.5, -13), V(13, 10.5, -6), V(16, 13.4, -1.6),
-    ]);
+    this.buildMakeup();
   }
 
-  private buildSiteDressing() {
-    // people, for scale
-    for (const [x, z, y] of [
-      [-44, 12, 0], [-14, 9.5, 6.1], [4.5, 6.5, 0], [22, 5.5, 10.1], [-18, 20, 0],
-    ] as const) {
-      const p = scaleFigure(z > 8 ? C.amber : C.lime);
-      p.position.set(x, y, z);
-      p.rotation.y = Math.random() * 6;
-      this.root.add(p);
+  /**
+   * Process water -> mixer make-up, to the far end of the spray ring main.
+   * The binder screw belongs to the silo itself, so there is no second binder
+   * line here any more - there used to be two running side by side.
+   */
+  private buildMakeup() {
+    const mx = SITE.mixer.x, ring = Mixer.DECK + 3.3;
+    const pts = [
+      V(1.6, 6.4, 16), V(8, 9.6, 14), V(mx + 2, 12.2, 6), V(mx + 5.2, 11.8, 1.6),
+      V(mx + 4.85, ring, 1.6),
+    ];
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) len += pts[i].distanceTo(pts[i - 1]);
+    const mat = flowMaterial(C.water, { density: bandsFor(len), intensity: 0.9 });
+    this.root.add(pipeRun(pts, 0.18, mat).group);
+    this.links.push(mat);
+    this.linkKinds.push('makeup');
+  }
+
+  /**
+   * The services pipe rack along the north side of the mixing tower: flush
+   * water, gland water and compressed air on top, the cable tray underneath,
+   * dropping into a services pit at each end. It carries nothing the sim
+   * models, which is exactly how a real one looks - most of what is on a
+   * pipe rack is not the process.
+   */
+  private buildServices() {
+    const Z = -7.5, X0 = 0, X1 = 30, TOP = 4.8, TRAY = 3.7;
+    const steel = metal(C.steel, 0.65, 0.9);
+    const g = new THREE.Group();
+    for (let x = X0; x <= X1; x += 6) {
+      const post = box(0.3, TOP, 0.3, steel);
+      post.position.set(x, TOP / 2, Z);
+      g.add(post);
+      for (const y of [TOP, TRAY]) {
+        const arm = box(0.22, 0.22, 2.4, steel);
+        arm.position.set(x, y, Z);
+        g.add(arm);
+      }
+      const foot = plinth(0.8, 0.3, 0.8);
+      foot.position.set(x, 0, Z);
+      g.add(foot);
     }
+    for (const dz of [-1.1, 1.1]) {
+      const stringer = box(X1 - X0, 0.18, 0.14, steel);
+      stringer.position.set((X0 + X1) / 2, TOP + 0.02, Z + dz);
+      g.add(stringer);
+    }
+    const services: Array<[number, number, number]> = [
+      [0x2f6f9a, 0.17, -0.7],   // flush water
+      [0x3f8a5a, 0.12, -0.2],   // gland water
+      [0x7d8b99, 0.14, 0.3],    // compressed air
+      [0x2f6f9a, 0.1, 0.75],    // wash-down
+    ];
+    for (const [colour, r, dz] of services) {
+      const y = TOP + 0.11 + r;
+      const pts = [
+        V(X0 - 1.2, 0.3, Z + dz), V(X0 - 1.2, y, Z + dz), V(X1 + 1.2, y, Z + dz), V(X1 + 1.2, 0.3, Z + dz),
+      ];
+      g.add(pipeRun(pts, r, metal(colour, 0.5, 0.5)).group);
+    }
+    const tray = box(X1 - X0 + 2.4, 0.12, 0.7, metal(C.handrail, 0.6, 0.3));
+    tray.position.set((X0 + X1) / 2, TRAY + 0.17, Z);
+    g.add(tray);
+    for (const x of [X0 - 1.2, X1 + 1.2]) {
+      const pit = box(1.2, 0.5, 2.6, matte(C.concrete, 0.95));
+      pit.position.set(x, 0.25, Z);
+      g.add(pit);
+      const drop = box(0.7, TRAY + 0.1, 0.12, metal(C.handrail, 0.6, 0.3));
+      drop.position.set(x + (x < 10 ? 0.5 : -0.5), (TRAY + 0.3) / 2, Z + 0.9);
+      g.add(drop);
+    }
+    this.root.add(g);
+  }
+
+  private buildSiteDressing(kind: WorldKind) {
+    // People, for scale - except at 4,400 m, where it is ROVs, and on an
+    // Earth everyone left, where it is the caretaker.
+    const spots = [
+      [-44, 12, 0], [-14, 9.5, 6.1], [4.5, 6.5, 0], [22, 3.0, 7.1], [-18, 20, 0],
+    ] as const;
+    spots.forEach(([x, z, y], i) => {
+      if (kind === 'waste') return;
+      const p = kind === 'ocean' ? rov() : scaleFigure(z > 8 ? C.amber : C.lime);
+      p.position.set(x, kind === 'ocean' ? 4 + i * 1.7 : y, z);
+      p.rotation.y = (i * 2.3) % 6;
+      this.root.add(p);
+      if (kind === 'ocean') this.rovs.push(p);
+    });
 
     // a light mast or two
     for (const [x, z] of [
@@ -490,23 +750,43 @@ export class World {
       const l = new THREE.PointLight(0xffe9c4, 160, 70, 2);
       l.position.set(0, 17.5, 0);
       mast.add(l);
+      // underwater the light has somewhere to be seen: a cone of lit snow
+      if (kind === 'ocean') {
+        const beam = new THREE.Mesh(
+          new THREE.ConeGeometry(11, 17.5, 28, 1, true),
+          new THREE.MeshBasicMaterial({
+            color: 0x9fd8ff, transparent: true, opacity: 0.05,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+          }),
+        );
+        beam.position.y = 17.8 / 2;
+        mast.add(beam);
+      }
       mast.position.set(x, 0, z);
       this.root.add(mast);
     }
   }
 
   update(t: Telemetry, dt: number) {
+    this.clock += dt;
     for (const u of this.units) u.update(t, dt, this.fx);
     this.fx.update(dt);
+    this.dressing?.update(t, dt, this.clock);
+    this.deliveries.update(t, dt, this.clock);
+    this.rovs.forEach((r, i) => {
+      r.position.y = 4 + i * 1.7 + Math.sin(this.clock * 0.7 + i) * 0.5;
+      r.rotation.y += dt * 0.08 * (i % 2 ? 1 : -1);
+    });
 
     // Fade the rock out of the way once you are actually looking underground.
     // Driven off the orbit target rather than the camera, so simply standing
     // on a high vantage point does not dissolve the ground under the plant.
-    const look = this.stage.controls.target.y;
-    const cam = this.stage.camera.position.y;
-    const depth = Math.max(0, -look / 26) + Math.max(0, -cam / 40);
-    this.underground.setXray(Math.min(1, depth));
-    this.upstreamCircuit.setVisible(t.upstream.hard);
+    if (this.underground) {
+      const look = this.stage.controls.target.y;
+      const cam = this.stage.camera.position.y;
+      const depth = Math.max(0, -look / 26) + Math.max(0, -cam / 40);
+      this.underground.setXray(Math.min(1, depth));
+    }
 
     // drive the interconnecting pipework from the real stream rates
     const on = t.status !== 'idle' && t.status !== 'blocked';
@@ -520,7 +800,6 @@ export class World {
         case 'of': v = t.thickener.overflow.water > 1 ? 2.6 : 0; break;
         case 'filtrate': v = t.filter.filtrate.water > 1 ? 2.4 : 0; break;
         case 'makeup': v = t.mixer.mixWater > 0.5 ? 2.2 : 0; break;
-        case 'binder': v = t.silo.feedRate > 0.05 ? 1.1 : 0; break;
       }
       setFlow(this.links[i], v);
     }

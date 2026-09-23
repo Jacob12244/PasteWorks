@@ -5,6 +5,7 @@ import { C, metal, matte, glow, glowUnique, liquor } from './palette';
 import { box, cyl, tube, strip, pipeSupport, flange, Tag } from './parts';
 import { flowMaterial, setFlow, bandsFor, FlowMaterial } from './flow';
 import { Unit } from './units';
+import type { Names } from '../scenario/types';
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerpN = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -43,56 +44,91 @@ export function scaleFigure(hiVis: number = C.amber): THREE.Group {
 /** Footprint of the rock mass, so the ground can be cut away over it. */
 export const ROCK = { x0: CUT_X, x1: CUT_X + 60, z0: -29, z1: 29 };
 
+export interface GroundSpec {
+  plain: number;
+  pad: number;
+  grid: [number, number];
+  kerb: number;
+  /** punch the long-section cutaway over the rock block */
+  cut: boolean;
+  /** a shinier pad, for a wet street */
+  wet?: boolean;
+}
+
+/** A rectangle to leave out of the plain, x0 x1 z0 z1. */
+export type Hole = [number, number, number, number];
+
 /** The pad the plant stands on, plus the distant ground. */
-export function buildGround(): THREE.Group {
+export function buildGround(
+  spec: GroundSpec = {
+    plain: 0x0f141c, pad: 0x252b34, grid: [0x2f6f74, 0x1d2732], kerb: C.cyan, cut: true,
+  },
+  holes: Hole[] = [],
+  size = 300,
+): THREE.Group {
   const g = new THREE.Group();
 
-  // Wide dark plain with a rectangular hole punched over the long-section,
-  // otherwise the ground simply roofs over the stope and hides it.
+  // Wide dark plain, with holes punched wherever something has to be seen
+  // below the surface - otherwise the ground simply roofs it over.
+  // Built in (x, -z) and laid down with a -90 deg turn, so the face points UP.
+  // It used to be turned +90, which pointed it at the centre of the earth: the
+  // plain was back-face culled from every camera and nobody could tell,
+  // because it was nearly the colour of the sky behind it.
   const outline = new THREE.Shape();
-  outline.moveTo(-300, -300);
-  outline.lineTo(300, -300);
-  outline.lineTo(300, 300);
-  outline.lineTo(-300, 300);
+  outline.moveTo(-size, size);
+  outline.lineTo(size, size);
+  outline.lineTo(size, -size);
+  outline.lineTo(-size, -size);
   outline.closePath();
 
-  const hole = new THREE.Path();
-  hole.moveTo(ROCK.x0, ROCK.z0);
-  hole.lineTo(ROCK.x1, ROCK.z0);
-  hole.lineTo(ROCK.x1, ROCK.z1);
-  hole.lineTo(ROCK.x0, ROCK.z1);
-  hole.closePath();
-  outline.holes.push(hole);
+  const cuts: Hole[] = [...holes];
+  if (spec.cut) cuts.push([ROCK.x0, ROCK.x1, ROCK.z0, ROCK.z1]);
+  for (const [x0, x1, z0, z1] of cuts) {
+    const hole = new THREE.Path();
+    hole.moveTo(x0, -z0);
+    hole.lineTo(x0, -z1);
+    hole.lineTo(x1, -z1);
+    hole.lineTo(x1, -z0);
+    hole.closePath();
+    outline.holes.push(hole);
+  }
 
-  const plain = new THREE.Mesh(new THREE.ShapeGeometry(outline), matte(0x0f141c, 1));
-  plain.rotation.x = Math.PI / 2;   // shape XY -> world XZ, +y of shape becomes +z
+  const plain = new THREE.Mesh(new THREE.ShapeGeometry(outline), matte(spec.plain, 1));
+  plain.rotation.x = -Math.PI / 2;  // shape (x, y) -> world (x, -y): hence the -z above
   plain.position.y = -0.4;
   plain.receiveShadow = true;
   g.add(plain);
 
   // lit collar around the cut so the section edge reads as deliberate
-  for (const [len, px, pz, rot] of [
-    [ROCK.x1 - ROCK.x0, (ROCK.x0 + ROCK.x1) / 2, ROCK.z0, 0],
-    [ROCK.x1 - ROCK.x0, (ROCK.x0 + ROCK.x1) / 2, ROCK.z1, 0],
-    [ROCK.z1 - ROCK.z0, ROCK.x1, 0, Math.PI / 2],
-  ] as const) {
-    const lit = strip(len, C.cyan, 0.12, 1.3);
-    lit.position.set(px, 0.05, pz);
-    lit.rotation.y = rot;
-    g.add(lit);
+  if (spec.cut) {
+    for (const [len, px, pz, rot] of [
+      [ROCK.x1 - ROCK.x0, (ROCK.x0 + ROCK.x1) / 2, ROCK.z0, 0],
+      [ROCK.x1 - ROCK.x0, (ROCK.x0 + ROCK.x1) / 2, ROCK.z1, 0],
+      [ROCK.z1 - ROCK.z0, ROCK.x1, 0, Math.PI / 2],
+    ] as const) {
+      const lit = strip(len, spec.kerb, 0.12, 1.3);
+      lit.position.set(px, 0.05, pz);
+      lit.rotation.y = rot;
+      g.add(lit);
+    }
   }
 
   // engineered pad under the plant
+  const padMat = spec.wet
+    // wet, but not a mirror: the studio environment map is a white room, and a
+    // chrome pad reflects it as a white blaze in the middle of the night
+    ? new THREE.MeshStandardMaterial({ color: spec.pad, roughness: 0.38, metalness: 0.3, envMapIntensity: 0.25 })
+    : matte(spec.pad, 0.98);
   const pad = new THREE.Mesh(
     new THREE.BoxGeometry(CUT_X + 84, 0.5, 74),
-    matte(0x252b34, 0.98),
+    padMat,
   );
   pad.position.set(-22, -0.25, 0);
   pad.receiveShadow = true;
   g.add(pad);
 
   // survey grid on the pad
-  const grid = new THREE.GridHelper(150, 30, 0x2f6f74, 0x1d2732);
+  const grid = new THREE.GridHelper(150, 30, spec.grid[0], spec.grid[1]);
   (grid.material as THREE.Material).opacity = 0.45;
   (grid.material as THREE.Material).transparent = true;
   grid.position.set(-22, 0.02, 0);
@@ -103,7 +139,7 @@ export function buildGround(): THREE.Group {
     const kerb = box(CUT_X + 84, 0.45, 0.6, matte(0x30373f, 0.95));
     kerb.position.set(-22, 0.2, sz);
     g.add(kerb);
-    const lit = strip(CUT_X + 80, C.cyan, 0.07, 1.1);
+    const lit = strip(CUT_X + 80, spec.kerb, 0.07, 1.1);
     lit.position.set(-22, 0.44, sz);
     g.add(lit);
   }
@@ -118,7 +154,8 @@ export function buildGround(): THREE.Group {
  */
 export class Underground extends Unit {
   readonly id = 'stope';
-  readonly name = 'Stope 14-2 North';
+  readonly name: string;
+  private names?: Names;
 
   private fill: THREE.Mesh;
   private fillMat: THREE.MeshStandardMaterial;
@@ -128,8 +165,10 @@ export class Underground extends Unit {
   private hull!: THREE.MeshStandardMaterial;
   private massEdges!: THREE.LineSegments;
 
-  constructor() {
-    super('STOPE 14-2 N', 3.4, '#c08f52');
+  constructor(names?: Names) {
+    super(names?.destShort ?? 'STOPE 14-2 N', 3.4, '#c08f52');
+    this.name = names?.dest ?? 'Stope 14-2 North';
+    this.names = names;
     const g = this.group;
 
     const W = 60, H = 72, D = 58;
@@ -326,7 +365,7 @@ export class Underground extends Unit {
  */
 export class PasteLine extends Unit {
   readonly id = 'pipeline';
-  readonly name = 'Paste Line PL-01';
+  readonly name: string;
 
   private mats: FlowMaterial[] = [];
   private collarLamp: THREE.Mesh;
@@ -334,8 +373,10 @@ export class PasteLine extends Unit {
   private discharge: THREE.Mesh;
   private plugMarks: THREE.Mesh[] = [];
 
-  constructor() {
-    super('PASTE LINE', 2.8, '#c08f52');
+  /** @param startX where the pump's discharge spool ends, world x */
+  constructor(startX = 34.6, names?: Names) {
+    super(names?.lineShort ?? 'PASTE LINE', 2.8, '#c08f52');
+    this.name = names?.line ?? 'Paste Line PL-01';
     const g = this.group;
     const R = 0.34;
 
@@ -358,10 +399,10 @@ export class PasteLine extends Unit {
     };
 
     // surface run from the pump to the borehole collar
-    const a0 = new THREE.Vector3(34.6, 2.3, 0);
+    const a0 = new THREE.Vector3(startX, 2.3, 0);
     const a1 = new THREE.Vector3(CUT_X + 10, 2.3, 0);
     seg(a0, a1, 40);
-    for (let x = 36; x < CUT_X + 10; x += 5) {
+    for (let x = startX + 1.5; x < CUT_X + 9; x += 5) {
       const s = pipeSupport(1.9);
       s.position.set(x, 0, 0);
       g.add(s);

@@ -18,8 +18,10 @@
 
 import type { Plant, Telemetry } from '../sim/plant';
 import { DESIGN } from '../sim/plant';
+import type { Scenario } from '../scenario';
+import { sheet, type Sheet } from '../scenario/flowsheet';
 import {
-  SLIDERS, UPSTREAM_SLIDERS, SliderSpec, bagValue, setBagValue, shown,
+  SliderSpec, bagValue, setBagValue, shown, upstreamSliders, plantSliders,
 } from './setpoints';
 
 const el = <K extends keyof HTMLElementTagNameMap>(
@@ -49,18 +51,16 @@ interface NodeSpec {
   name: string;
   /** conditions that light this tile up */
   alarms?: string[];
-  /** false when the tile is only in play in hard mode */
-  hard?: boolean;
   /** drawn in series with the tile above it */
   series?: boolean;
 }
 
 const MIMIC: NodeSpec[] = [
-  { id: 'mill', col: 0, row: 0, name: 'BALL MILL', hard: true,
+  { id: 'mill', col: 0, row: 0, name: 'BALL MILL',
     alarms: ['media-low', 'media-out', 'liberation'] },
-  { id: 'flot', col: 0, row: 1, name: 'FLOTATION', hard: true, series: true,
+  { id: 'flot', col: 0, row: 1, name: 'FLOTATION', series: true,
     alarms: ['sulphide-high'] },
-  { id: 'cyc', col: 0, row: 2, name: 'DESLIME CYCLONES', hard: true, series: true,
+  { id: 'cyc', col: 0, row: 2, name: 'DESLIME CYCLONES', series: true,
     alarms: ['supply-short'] },
   { id: 'thk', col: 0, row: 3, name: 'THICKENER 01', series: true,
     alarms: ['thk-rise', 'thk-bed', 'rake-high', 'rake-trip'] },
@@ -109,6 +109,7 @@ const LAMPS: LampSpec[] = [
   { id: 'wear', text: 'PIPE WALL WEAR', level: 'warn' },
   { id: '@plug', text: 'LINE PLUGGED', level: 'trip' },
   { id: '@starve', text: 'PUMP STARVED', level: 'warn' },
+  { id: 'plume', text: 'FINES TO OVERFLOW', level: 'warn' },
 ];
 
 // ------------------------------------------------------------------ trends
@@ -120,8 +121,6 @@ interface TrendSpec {
   ref?: number;
   /** decimals on the live readout */
   dp?: number;
-  /** only meaningful in hard mode; drawn as "not in play" otherwise */
-  hard?: boolean;
   pick: (t: Telemetry) => number;
 }
 
@@ -142,7 +141,7 @@ const LEVEL_TRENDS: TrendSpec[] = [
   { key: 'silo', label: 'Binder silo', unit: '%', colour: '#d9d3c3',
     min: 0, max: 100, pick: (t) => t.silo.pct },
   { key: 'media', label: 'Ball hopper', unit: '%', colour: '#9aa7b8',
-    min: 0, max: 100, hard: true, pick: (t) => t.media.pct },
+    min: 0, max: 100, pick: (t) => t.media.pct },
   { key: 'stope', label: 'Stope 14-2 N', unit: '%', colour: '#9fe870',
     min: 0, max: 100, ref: 100, dp: 1, pick: (t) => t.stope.pct },
   { key: 'spill', label: 'Spilled, total', unit: 'm³', colour: '#ff5a3c',
@@ -170,7 +169,18 @@ const PROCESS_TRENDS: TrendSpec[] = [
     min: 0, max: 40, dp: 2, pick: (t) => t.cost.perM3 },
 ];
 
-const ALL_TRENDS = [...LEVEL_TRENDS, ...PROCESS_TRENDS];
+/** Only where a cyclone bank or a centrifuge sends fines out of the top. */
+const PLUME_TREND: TrendSpec = {
+  key: 'plume', label: 'Fines to overflow', unit: 't/h', colour: '#ff8f6b',
+  min: 0, max: 10, dp: 1, pick: (t) => t.thickener.overflow.solids,
+};
+/** Only where every litre of mix water is hauled in. */
+const HAULED_TREND: TrendSpec = {
+  key: 'hauled', label: 'Water hauled', unit: 'm³/h', colour: '#3fa9f5',
+  min: 0, max: 80, dp: 1, pick: (t) => t.water.makeUp,
+};
+
+const ALL_TRENDS = [...LEVEL_TRENDS, ...PROCESS_TRENDS, PLUME_TREND, HAULED_TREND];
 
 /** 540 samples at one every 40 shift-seconds is exactly six hours of history. */
 const SAMPLES = 540;
@@ -214,7 +224,7 @@ class TrendPane {
     c.style.height = h + 'px';
   }
 
-  draw(hist: Record<string, number[]>, hard: boolean) {
+  draw(hist: Record<string, number[]>) {
     const c = this.canvas;
     const r = this.fit();
     if (r.w < 2 || r.h < 2) return;
@@ -238,25 +248,24 @@ class TrendPane {
     this.specs.forEach((tr, i) => {
       const x0 = (i % cols) * (cw + gx);
       const y0 = Math.floor(i / cols) * (ch + gy);
-      this.cell(g, tr, hist[tr.key], hard, x0, y0, cw, ch);
+      this.cell(g, tr, hist[tr.key], x0, y0, cw, ch);
     });
   }
 
   private cell(
-    g: CanvasRenderingContext2D, tr: TrendSpec, data: number[], hard: boolean,
+    g: CanvasRenderingContext2D, tr: TrendSpec, data: number[],
     x0: number, y0: number, w: number, h: number,
   ) {
     g.fillStyle = 'rgba(255,255,255,0.028)';
     g.fillRect(x0, y0, w, h);
 
-    const dead = tr.hard && !hard;
     const padT = 15, padB = 11, padX = 5;
     const ph = Math.max(6, h - padT - padB);
     const span = Math.max(tr.max - tr.min, 1e-6);
     const yAt = (v: number) =>
       y0 + padT + ph - ((Math.max(tr.min, Math.min(tr.max, v)) - tr.min) / span) * ph;
 
-    if (!dead && tr.ref !== undefined && tr.ref <= tr.max && tr.ref >= tr.min) {
+    if (tr.ref !== undefined && tr.ref <= tr.max && tr.ref >= tr.min) {
       g.strokeStyle = 'rgba(255,255,255,0.22)';
       g.setLineDash([4, 4]);
       g.beginPath();
@@ -266,7 +275,7 @@ class TrendPane {
       g.setLineDash([]);
     }
 
-    if (!dead && data && data.length > 1) {
+    if (data && data.length > 1) {
       const xAt = (k: number) => x0 + padX + ((w - padX * 2) * k) / (SAMPLES - 1);
       g.strokeStyle = tr.colour;
       g.lineWidth = 1.5;
@@ -290,21 +299,15 @@ class TrendPane {
       g.fillText(f(last, tr.dp ?? 0), x0 + w - padX, y0 + 11);
     }
 
-    g.fillStyle = dead ? '#3d4858' : '#8b9bb0';
+    g.fillStyle = '#8b9bb0';
     g.font = '9.5px ui-monospace, monospace';
     g.textAlign = 'left';
     g.fillText(tr.label, x0 + padX + 1, y0 + 11);
 
-    g.fillStyle = dead ? '#333d4b' : '#54627a';
+    g.fillStyle = '#54627a';
     g.font = '8.5px ui-monospace, monospace';
     g.fillText(tr.min + ' – ' + tr.max + '  ' + tr.unit, x0 + padX + 1, y0 + h - 3);
 
-    if (dead) {
-      g.fillStyle = '#3d4858';
-      g.font = '9px ui-monospace, monospace';
-      g.textAlign = 'center';
-      g.fillText('STANDARD MODE — NOT IN PLAY', x0 + w / 2, y0 + padT + ph / 2);
-    }
   }
 }
 
@@ -315,11 +318,16 @@ export class Scada {
   private sliders = new Map<string, HTMLInputElement>();
   private slVals = new Map<string, HTMLElement>();
   private slRows = new Map<string, HTMLElement>();
-  private upEls: HTMLElement[] = [];
+  private specs: SliderSpec[] = [];
+  private sh: Sheet = sheet();
+  /** this site's mimic, lamps and trends - the tables filtered to its flowsheet */
+  private nodes: NodeSpec[] = [];
+  private lampList: LampSpec[] = [];
+  private levelTrends: TrendSpec[] = [];
+  private processTrends: TrendSpec[] = [];
   private tiles = new Map<string, {
     box: SVGElement; big: SVGElement; sub: SVGElement; name: SVGElement;
   }>();
-  private mimicUp!: SVGElement;
   private lamps = new Map<string, HTMLElement>();
   private evList!: HTMLElement;
   private evCount = -1;
@@ -349,11 +357,92 @@ export class Scada {
   onSetpoint: () => void = () => {};
   onSpeed: (s: number) => void = () => {};
   onRun: () => void = () => {};
+  /** back to the title screen */
+  onLeave: () => void = () => {};
 
-  constructor(private plant: Plant) {
+  constructor(private plant: Plant, private sc: Scenario) {
+    // This site's own name for where the paste goes, on the mimic and trends.
+    MIMIC.find((n) => n.id === 'stp')!.name = sc.names.destShort;
+    LEVEL_TRENDS.find((tr) => tr.key === 'stope')!.label = sc.names.destShort;
+    // These were read at module load, before any scenario was applied: the
+    // strength line has to be this site's target, and the cost trace has to
+    // have room for Psyche, where fill costs fifteen times what it does here.
+    const ucsTr = PROCESS_TRENDS.find((tr) => tr.key === 'ucs')!;
+    ucsTr.ref = DESIGN.targetUcs;
+    ucsTr.max = Math.max(2200, DESIGN.targetUcs * 1.8);
+    const costTr = PROCESS_TRENDS.find((tr) => tr.key === 'cost')!;
+    costTr.ref = sc.budget;
+    costTr.max = Math.ceil((sc.budget * 1.6) / 10) * 10;
+    costTr.dp = sc.budget >= 100 ? 0 : 2;
+    this.fitToFlowsheet();
     for (const tr of ALL_TRENDS) this.hist[tr.key] = [];
     this.build();
     document.body.append(this.root);
+  }
+
+  /**
+   * Cut the mimic, the lamp box and the trends down to what this site
+   * actually has, and name things the way this site names them.
+   */
+  private fitToFlowsheet() {
+    const sh = this.sh;
+    const has = (id: string) => {
+      switch (id) {
+        case 'flot': return sh.separation !== 'none';
+        case 'cyc': return sh.hasDeslime;
+        case 'thk': case 'srg': case 'prs': return sh.dewater !== 'dry';
+        default: return true;
+      }
+    };
+    const rename: Record<string, string> = {
+      mill: sh.tiles.source, flot: sh.tiles.separation, cyc: sh.tiles.deslime,
+      thk: sh.tiles.dewater, bin: sh.tiles.bin, pw: sh.tiles.water,
+    };
+    const rows = [0, 0];
+    this.nodes = MIMIC.filter((n) => has(n.id)).map((n) => {
+      const out = { ...n, name: rename[n.id] ?? n.name, row: rows[n.col]++ };
+      if (out.row === 0) out.series = false;
+      return out;
+    });
+    // the water tile is a side loop, not a step in series
+    const pw = this.nodes.find((n) => n.id === 'pw');
+    if (pw) pw.series = false;
+
+    this.lampList = LAMPS.filter((l) => {
+      switch (l.id) {
+        case 'media-low': case 'media-out': return sh.hasMedia;
+        case 'liberation': return sh.source === 'mill';
+        case 'sulphide-high': return sh.hasSulphide;
+        case 'thk-rise': case 'thk-bed': case 'rake-high': case 'rake-trip': return sh.hasThickener;
+        case 'uf-limited': return sh.hasUf;
+        case 'uf-low': case 'surge-spill': return sh.hasSurge;
+        case 'pw-high': case 'pw-spill': return sh.canSpillWater;
+        case 'plume': return sh.hasPlume;
+        default: return true;
+      }
+    }).map((l) => {
+      if (l.id === 'media-low') return { ...l, text: sh.media.short.toUpperCase() + ' LOW' };
+      if (l.id === 'media-out') return { ...l, text: sh.source === 'scoop' ? 'HAMMERS WORN' : l.text };
+      if (l.id === 'uf-limited' && sh.dewater === 'cyclones') return { ...l, text: 'U/F AT CYCLONE LIMIT' };
+      return l;
+    });
+
+    this.levelTrends = LEVEL_TRENDS.filter((tr) => {
+      switch (tr.key) {
+        case 'srg': return sh.hasSurge;
+        case 'pw': return sh.dewater !== 'dry';
+        case 'bed': return sh.hasThickener;
+        case 'media': return sh.hasMedia;
+        default: return true;
+      }
+    }).map((tr) => (tr.key === 'media' ? { ...tr, label: sh.media.short }
+      : tr.key === 'cake' && sh.dewater === 'dry' ? { ...tr, label: 'Crushed waste bin' } : tr));
+    if (sh.hasPlume) this.levelTrends.splice(2, 0, PLUME_TREND);
+    if (sh.dewater === 'dry') this.levelTrends.splice(1, 0, HAULED_TREND);
+
+    this.processTrends = PROCESS_TRENDS.filter((tr) => tr.key !== 'torq' || sh.hasTorque)
+      .map((tr) => (tr.key === 'torq' && sh.dewater === 'centrifuge'
+        ? { ...tr, label: 'Scroll torque' } : tr));
   }
 
   // ---------------------------------------------------------------- building
@@ -372,7 +461,7 @@ export class Scada {
     const w = el('div', 'sc-win');
     const lintel = el('div', 'sc-lintel');
     lintel.append(
-      el('span', 'sc-where', 'CONTROL ROOM &middot; <b>CPB PLANT 01</b>'),
+      el('span', 'sc-where', 'CONTROL ROOM &middot; <b>' + this.sc.title.toUpperCase() + '</b>'),
     );
     this.clock = el('span', 'sc-clock', '0.0 h');
     lintel.append(this.clock);
@@ -382,6 +471,10 @@ export class Scada {
     const centre = el('button', 'sc-centre', '&#8635;  CENTRE');
     centre.onclick = () => this.onCentre();
     lintel.append(centre);
+    const worlds = el('button', 'sc-centre', '&#8634;  WORLDS');
+    worlds.title = 'Back to the choice of worlds';
+    worlds.onclick = () => this.onLeave();
+    lintel.append(worlds);
     const exit = el('button', 'sc-exit', 'LEAVE THE DESK  [Esc]');
     exit.onclick = () => this.onExit();
     lintel.append(exit);
@@ -397,8 +490,8 @@ export class Scada {
     this.grid.append(
       this.screen('01', 'PROCESS MIMIC', this.mimic()),
       this.screen('02', 'SETPOINTS', this.setpoints()),
-      this.screen('03', 'TRENDS &middot; INVENTORY &middot; 6 h', this.trends(LEVEL_TRENDS)),
-      this.screen('04', 'TRENDS &middot; PROCESS &middot; 6 h', this.trends(PROCESS_TRENDS)),
+      this.screen('03', 'TRENDS &middot; INVENTORY &middot; 6 h', this.trends(this.levelTrends)),
+      this.screen('04', 'TRENDS &middot; PROCESS &middot; 6 h', this.trends(this.processTrends)),
     );
     // The banner goes above the grid, not in it: it is one screen the width of
     // two, mounted high on the wall where it sits at the top of your vision.
@@ -476,7 +569,7 @@ export class Scada {
     const Y = (r: number) => 10 + r * (H + GAP);
 
     // series connectors first, so the tiles sit on top of them
-    for (const n of MIMIC) {
+    for (const n of this.nodes) {
       if (!n.series) continue;
       const x = X(n.col) + 22;
       const line = svg('path', {
@@ -485,15 +578,16 @@ export class Scada {
       });
       root.append(line);
     }
-    // the carry from the surge tank across to the press
+    // the carry from the last step on the left across to the top of the right
+    const lastLeft = Math.max(...this.nodes.filter((n) => n.col === 0 && n.id !== 'pw').map((n) => n.row));
     root.append(svg('path', {
-      d: `M ${X(0) + W} ${Y(4) + H / 2} L ${X(0) + W + 20} ${Y(4) + H / 2}`
+      d: `M ${X(0) + W} ${Y(lastLeft) + H / 2} L ${X(0) + W + 20} ${Y(lastLeft) + H / 2}`
         + ` L ${X(1) - 20} ${Y(0) + H / 2} L ${X(1)} ${Y(0) + H / 2}`,
       stroke: '#35e0d0', 'stroke-width': 2, fill: 'none', opacity: 0.5,
       'stroke-dasharray': '5 4',
     }));
 
-    for (const n of MIMIC) {
+    for (const n of this.nodes) {
       const g = svg('g', {});
       const box = svg('rect', {
         x: X(n.col), y: Y(n.row), width: W, height: H, rx: 5,
@@ -517,24 +611,6 @@ export class Scada {
       this.tiles.set(n.id, { box, big, sub, name });
     }
 
-    this.mimicUp = svg('g', {});
-    this.mimicUp.append(svg('rect', {
-      x: X(0) + 12, y: Y(1) + 2, width: W - 24, height: H - 4, rx: 4,
-      fill: 'rgba(10,16,23,0.95)', stroke: '#2b3644',
-    }));
-    const msg = svg('text', {
-      x: X(0) + W / 2, y: Y(1) + 18, fill: '#6d7c90', 'font-size': 11,
-      'text-anchor': 'middle', 'letter-spacing': 0.8,
-    });
-    msg.textContent = 'UPSTREAM CIRCUIT NOT IN PLAY';
-    const msg2 = svg('text', {
-      x: X(0) + W / 2, y: Y(1) + 31, fill: '#4a5768', 'font-size': 9.5,
-      'text-anchor': 'middle', 'letter-spacing': 1.4,
-    });
-    msg2.textContent = 'STANDARD MODE — THE TAILINGS ARE A GIVEN';
-    this.mimicUp.append(msg, msg2);
-    root.append(this.mimicUp);
-
     wrap.append(root);
     return wrap;
   }
@@ -544,14 +620,8 @@ export class Scada {
   private setpoints() {
     const wrap = el('div', 'sc-body sc-sp');
 
-    const upHead = el('div', 'sc-sect', 'Upstream circuit');
-    wrap.append(upHead);
-    this.upEls.push(upHead);
-    for (const s of UPSTREAM_SLIDERS) {
-      const row = this.slider(s);
-      wrap.append(row);
-      this.upEls.push(row);
-    }
+    wrap.append(el('div', 'sc-sect', 'Upstream circuit'));
+    for (const s of upstreamSliders()) wrap.append(this.slider(s));
 
     const toggles = el('div', 'sc-toggles');
     const des = el('button');
@@ -562,12 +632,12 @@ export class Scada {
     };
     this.lampStrip.set('deslime', des);
     this.lampStrip.set('binder', bnd);
-    toggles.append(des, bnd);
+    if (this.sh.hasDeslime) toggles.append(des, bnd);
+    else { toggles.append(bnd); toggles.style.gridTemplateColumns = '1fr'; }
     wrap.append(toggles);
-    this.upEls.push(toggles);
 
     wrap.append(el('div', 'sc-sect', 'Backfill plant'));
-    for (const s of SLIDERS) wrap.append(this.slider(s));
+    for (const s of plantSliders()) wrap.append(this.slider(s));
     return wrap;
   }
 
@@ -596,6 +666,7 @@ export class Scada {
     row.append(input);
 
     this.sliders.set(s.key, input);
+    this.specs.push(s);
     this.slVals.set(s.key, v);
     this.slRows.set(s.key, row);
     this.paint(s, input, v);
@@ -610,7 +681,7 @@ export class Scada {
 
   /** Pull every slider back from the plant - after a reset, or a console edit. */
   syncSliders() {
-    for (const s of [...UPSTREAM_SLIDERS, ...SLIDERS]) {
+    for (const s of this.specs) {
       const input = this.sliders.get(s.key)!;
       input.value = String(bagValue(this.plant, s));
       this.paint(s, input, this.slVals.get(s.key)!);
@@ -647,7 +718,7 @@ export class Scada {
 
     const body = el('div', 'sc-wbody');
     const grid = el('div', 'sc-lamps');
-    for (const l of LAMPS) {
+    for (const l of this.lampList) {
       const t = el('div', 'sc-lamp', l.text);
       grid.append(t);
       this.lamps.set(l.id, t);
@@ -787,12 +858,8 @@ export class Scada {
     this.trendTick(t);
     this.deskTick(t, speed);
 
-    const hard = t.upstream.hard;
-    for (const e of this.upEls) e.style.opacity = hard ? '1' : '0.32';
-    for (const s of UPSTREAM_SLIDERS) {
-      (this.slRows.get(s.key)!.querySelector('input') as HTMLInputElement).disabled = !hard;
-    }
-    this.slRows.get('cyclonePressure')!.style.opacity = this.plant.up.deslime ? '1' : '0.4';
+    const cp = this.slRows.get('cyclonePressure');
+    if (cp) cp.style.opacity = this.plant.up.deslime ? '1' : '0.4';
   }
 
   private setTile(
@@ -817,7 +884,7 @@ export class Scada {
     let worst: 'ok' | 'warn' | 'trip' = fallback;
     for (const a of n.alarms ?? []) {
       if (!st.has(a)) continue;
-      const lamp = LAMPS.find((l) => l.id === a);
+      const lamp = this.lampList.find((l) => l.id === a);
       if (lamp?.level === 'trip') return 'trip';
       if (lamp?.level === 'warn') worst = 'warn';
     }
@@ -826,45 +893,78 @@ export class Scada {
 
   private mimicTiles(t: Telemetry) {
     const u = t.upstream;
-    const hard = u.hard;
-    this.mimicUp.setAttribute('opacity', hard ? '0' : '1');
 
-    const byId = new Map(MIMIC.map((n) => [n.id, n]));
-    const st = (id: string, fb: 'ok' | 'warn' = 'ok') =>
-      this.tileState(byId.get(id)!, fb);
+    const byId = new Map(this.nodes.map((n) => [n.id, n]));
+    const st = (id: string, fb: 'ok' | 'warn' = 'ok') => {
+      const n = byId.get(id);
+      return n ? this.tileState(n, fb) : 'ok';
+    };
+    const sh = this.sh;
 
-    if (hard) {
-      this.setTile('mill', f(u.p80) + ' µm',
-        f(this.plant.up.millFeed) + ' t/h ore · ' + f(u.specificEnergy, 1)
-        + ' kWh/t · charge ' + f(t.media.health * 100) + '%', st('mill'));
-      this.setTile('flot', f(u.sulphideRecovery * 100, 1) + ' %',
-        f(u.sulphide, 2) + ' %S to tails · ' + f(u.concentrate) + ' t/h conc', st('flot'));
+    {
+      const feedRate = f(this.plant.up.millFeed) + ' t/h';
+      if (sh.source === 'collector') {
+        this.setTile('mill', feedRate, 'collecting · ' + f(u.millPower) + ' kW on the collector and lift', st('mill'));
+        this.setTile('flot', f(u.concentrate) + ' t/h', 'nodules up the riser to the ship', st('flot'));
+      } else if (sh.source === 'reclaim') {
+        this.setTile('mill', feedRate, 'old tails · P80 ' + f(u.p80) + ' µm · ' + f(u.sulphide, 2) + '% S', st('mill'));
+      } else if (sh.source === 'scoop') {
+        this.setTile('mill', f(u.p80) + ' µm', feedRate + ' scooped · hammers '
+          + f(t.media.health * 100) + '%', st('mill'));
+        this.setTile('flot', f(u.concentrate, 1) + ' t/h', 'scrap steel off the crusher belt', st('flot'));
+      } else {
+        this.setTile('mill', f(u.p80) + ' µm',
+          feedRate + ' ore · ' + f(u.specificEnergy, 1)
+          + ' kWh/t · charge ' + f(t.media.health * 100) + '%', st('mill'));
+        if (sh.separation === 'magnetic') {
+          this.setTile('flot', f(u.sulphideRecovery * 100, 1) + ' %',
+            f(u.concentrate) + ' t/h metal · ' + f(u.liberation * 100) + '% liberated', st('flot'));
+        } else {
+          this.setTile('flot', f(u.sulphideRecovery * 100, 1) + ' %',
+            f(u.sulphide, 2) + ' %S to tails · ' + f(u.concentrate) + ' t/h conc', st('flot'));
+        }
+      }
       this.setTile('cyc', this.plant.up.deslime ? f(u.d50c, 1) + ' µm' : 'BYPASS',
         this.plant.up.deslime
           ? 'd50c · ' + f(u.deslimeSplit * 100) + '% to backfill · '
             + f(u.toTsf) + ' t/h to TSF'
           : 'cyclones out of circuit · all fines to the plant', st('cyc'));
-    } else {
-      for (const id of ['mill', 'flot', 'cyc']) this.setTile(id, '—', '', 'off');
     }
 
     const th = t.thickener;
-    this.setTile('thk', f(th.ufCw * 100, 1) + ' %',
-      'bed ' + f(th.bedPct) + '% · torque ' + f(th.torque) + '% · rise '
-      + f(th.riseRate, 2) + '/' + f(th.riseLimit, 2) + ' m/h', st('thk'));
+    if (sh.dewater === 'cyclones') {
+      this.setTile('thk', f(th.ufCw * 100, 1) + ' %', 'fines to sea ' + f(th.overflow.solids, 1)
+        + ' t/h · bypassed ' + f(u.bypassToTsf) + ' t/h', st('thk'));
+    } else if (sh.dewater === 'centrifuge') {
+      this.setTile('thk', f(th.ufCw * 100, 1) + ' %', 'scroll torque ' + f(th.torque)
+        + '% · centrate ' + f(th.overflowClarity) + ' mg/L', st('thk'));
+    } else {
+      this.setTile('thk', f(th.ufCw * 100, 1) + ' %',
+        'bed ' + f(th.bedPct) + '% · torque ' + f(th.torque) + '% · rise '
+        + f(th.riseRate, 2) + '/' + f(th.riseLimit, 2) + ' m/h', st('thk'));
+    }
     this.setTile('srg', f(t.ufTank.pct) + ' %',
       f(t.ufTank.volume) + ' of ' + DESIGN.ufTankVol + ' m³ at '
       + f(t.ufTank.cw * 100, 1) + '% solids', st('srg'));
-    this.setTile('pw', f(t.water.pct) + ' %',
-      f(t.water.recovered) + ' m³/h in · ' + f(t.water.toMill) + ' of '
-      + f(t.water.returnCap) + ' back to mill', st('pw'));
+    if (sh.dewater === 'dry') {
+      this.setTile('pw', f(t.water.makeUp, 1) + ' m³/h', 'hauled in at $' + DESIGN.costWater
+        + '/m³ · $' + f(t.cost.water) + ' so far', st('pw'));
+    } else if (DESIGN.millReturnCap >= 1e5) {
+      this.setTile('pw', f(t.water.recovered) + ' m³/h', sh.source === 'collector'
+        ? 'seawater, back where it came from' : 'recovered · every drop back to the mill', st('pw'));
+    } else {
+      this.setTile('pw', f(t.water.pct) + ' %',
+        f(t.water.recovered) + ' m³/h in · ' + f(t.water.toMill) + ' of '
+        + f(t.water.returnCap) + ' back to mill', st('pw'));
+    }
 
     const fl = t.filter;
     this.setTile('prs', f(fl.throughput) + ' t/h',
       f(fl.cycleTime, 1) + ' min cycle · cake ' + f(fl.cakeMoisture, 1)
       + '% moisture · ' + f(fl.utilisation) + '% util', st('prs'));
     this.setTile('bin', f(t.cakeBin.pct) + ' %',
-      f(t.cakeBin.mass) + ' t wet at ' + f(t.cakeBin.cw * 100, 1) + '% Cw', st('bin'));
+      f(t.cakeBin.mass) + ' t ' + (sh.dewater === 'dry' ? 'crushed' : 'wet') + ' at '
+      + f(t.cakeBin.cw * 100, 1) + '% Cw', st('bin'));
     this.setTile('silo', f(t.silo.pct) + ' %',
       f(t.silo.mass) + ' t · drawing ' + f(t.silo.feedRate, 2) + ' t/h · '
       + (u.binderType === 'slag' ? 'slag blend' : 'OPC'), st('silo'));
@@ -878,15 +978,24 @@ export class Scada {
       + ' · ' + f(t.pipe.velocity, 2) + ' m/s ' + t.pipe.regime,
       t.pipe.plugged ? 'trip' : st('pmp', pp.starved ? 'warn' : 'ok'));
     this.setTile('stp', f(t.stope.pct, 1) + ' %',
-      f(t.stope.volume) + ' of ' + DESIGN.stopeVolume + ' m³ · placed at '
+      f(t.stope.volume) + ' of ' + DESIGN.stopeVolume + ' m³ · ' + this.sc.names.placed + ' at '
       + f(t.stope.avgUcs) + ' kPa (target ' + DESIGN.targetUcs + ')',
       t.stope.pct > 1 && t.stope.avgUcs < DESIGN.targetUcs ? 'warn' : 'ok');
   }
 
+  /** Put the result of the job up on the banner, where everyone can see it. */
+  announce(ok: boolean, t: Telemetry) {
+    this.done = ok ? 'win' : 'lose';
+    this.doneText = (ok ? this.sc.names.complete : this.sc.names.complete + ' — UNDERSTRENGTH')
+      + ' · ' + t.stope.avgUcs.toFixed(0) + ' kPa · $' + t.cost.perM3.toFixed(2) + '/m³';
+  }
+  private done: 'win' | 'lose' | null = null;
+  private doneText = '';
+
   private warningsTick(t: Telemetry) {
     const st = this.plant.standing;
     let warn = 0, trip = 0;
-    for (const l of LAMPS) {
+    for (const l of this.lampList) {
       const on = l.id === '@plug' ? t.pipe.plugged
         : l.id === '@starve' ? t.pump.starved
         : st.has(l.id);
@@ -902,8 +1011,11 @@ export class Scada {
       ? trip + ' TRIP' + (trip > 1 ? 'S' : '') + (warn ? ' · ' + warn + ' WARNING' + (warn > 1 ? 'S' : '') : '')
       : warn ? warn + ' WARNING' + (warn > 1 ? 'S' : '')
       : 'ALL CLEAR';
+    if (this.done && t.status !== 'complete') this.done = null;   // a reset
+    if (this.done) this.warnCount.textContent = this.doneText;
     this.warnBar.classList.toggle('trip', trip > 0);
     this.warnBar.classList.toggle('warn', trip === 0 && warn > 0);
+    this.warnBar.classList.toggle('win', this.done === 'win');
 
     if (t.alarms.length !== this.evCount) {
       this.evCount = t.alarms.length;
@@ -935,7 +1047,7 @@ export class Scada {
         for (const tr of ALL_TRENDS) this.hist[tr.key].shift();
       }
     }
-    for (const p of this.panes) p.draw(this.hist, t.upstream.hard);
+    for (const p of this.panes) p.draw(this.hist);
   }
 
   private deskTick(t: Telemetry, speed: number) {
@@ -951,10 +1063,10 @@ export class Scada {
       b.classList.toggle('warn', live && pct < low);
     };
     call(this.siloBtn, 'Binder', t.silo.pct, 12, true);
-    call(this.mediaBtn, 'Balls', t.media.pct, 20, t.upstream.hard);
+    call(this.mediaBtn, this.sh.media.button, t.media.pct, 20, this.sh.hasMedia);
     // the handset itself lights up, so you notice from across the room
     this.siloBtn.parentElement!.classList.toggle('ring',
-      t.silo.pct < 12 || (t.upstream.hard && t.media.pct < 20));
+      t.silo.pct < 12 || (this.sh.hasMedia && t.media.pct < 20));
 
     [0, 1, 10, 60, 240].forEach((v, i) =>
       this.speedBtns[i].classList.toggle('on', v === speed));

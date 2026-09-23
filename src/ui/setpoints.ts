@@ -7,6 +7,7 @@
  */
 
 import type { Plant } from '../sim/plant';
+import { sheet } from '../scenario/flowsheet';
 
 export type SpKey =
   | 'flocDose' | 'ufCw' | 'cycleTime' | 'binderDose' | 'targetSlump' | 'strokeRate';
@@ -101,4 +102,31 @@ export function setBagValue(plant: Plant, s: SliderSpec, value: number) {
 export function shown(s: SliderSpec, raw: number): string {
   const v = raw * (s.scale ?? 1);
   return (Number.isFinite(v) ? v.toFixed(s.dp) : '--') + ' ' + s.unit;
+}
+
+/**
+ * The upstream sliders this site actually has, in its own words: there is no
+ * frother without a flotation bank, and a dredge rate is not a mill feed.
+ */
+export function upstreamSliders(): SliderSpec[] {
+  const sh = sheet();
+  return UPSTREAM_SLIDERS
+    .filter((s) => s.key === 'millFeed'
+      || (s.key === 'frother' && sh.hasFrother)
+      || (s.key === 'cyclonePressure' && sh.hasDeslime))
+    .map((s) => (s.key === 'millFeed'
+      ? { ...s, label: sh.feed.label, unit: sh.feed.unit, hint: sh.feed.hint }
+      : s));
+}
+
+/** And the plant sliders: no press cycle without a press, and so on. */
+export function plantSliders(): SliderSpec[] {
+  const sh = sheet();
+  return SLIDERS
+    .filter((s) => (s.key !== 'flocDose' || sh.hasFloc)
+      && (s.key !== 'ufCw' || sh.hasUf)
+      && (s.key !== 'cycleTime' || sh.hasPress))
+    .map((s) => (s.key === 'flocDose' ? { ...s, label: sh.floc.label, hint: sh.floc.hint }
+      : s.key === 'ufCw' ? { ...s, label: sh.uf.label, hint: sh.uf.hint }
+      : s));
 }

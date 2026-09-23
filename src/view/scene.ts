@@ -6,9 +6,10 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { C } from './palette';
+import type { Look } from '../scenario';
 
 /** Dusk sky so the emissive plant has something to sit against. */
-function skyDome(): THREE.Mesh {
+function skyDome(): THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial> {
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
@@ -38,6 +39,13 @@ function skyDome(): THREE.Mesh {
 }
 
 export class Stage {
+  private sky: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
+  private hemi: THREE.HemisphereLight;
+  private fill: THREE.DirectionalLight;
+  private rim: THREE.DirectionalLight;
+  private pools: THREE.PointLight[] = [];
+  /** the sun, or whatever passes for it; worlds aim things at it */
+  key: THREE.DirectionalLight;
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
@@ -57,7 +65,8 @@ export class Stage {
     this.renderer.toneMappingExposure = 1.15;
 
     this.scene.fog = new THREE.Fog(C.fog, 150, 520);
-    this.scene.add(skyDome());
+    this.sky = skyDome();
+    this.scene.add(this.sky);
 
     // Metal without image-based lighting renders black. A PMREM of the stock
     // room environment gives every steel surface something to reflect, which
@@ -81,9 +90,11 @@ export class Stage {
     this.controls.maxPolarAngle = Math.PI * 0.98;
 
     // ---- lighting ----
-    this.scene.add(new THREE.HemisphereLight(0x5a7da8, 0x0a0f16, 0.55));
+    this.hemi = new THREE.HemisphereLight(0x5a7da8, 0x0a0f16, 0.55);
+    this.scene.add(this.hemi);
 
     const key = new THREE.DirectionalLight(0xfff0dc, 2.0);
+    this.key = key;
     key.position.set(-70, 95, 70);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -102,21 +113,25 @@ export class Stage {
     const fill = new THREE.DirectionalLight(0x6ea8ff, 0.45);
     fill.position.set(80, 40, -80);
     this.scene.add(fill);
+    this.fill = fill;
 
     const rim = new THREE.DirectionalLight(0xff9a5c, 0.35);
     rim.position.set(30, 12, 120);
     this.scene.add(rim);
+    this.rim = rim;
 
     // pools of light over the working areas
     for (const [x, y, z, col, i] of [
       [-52, 14, 0, 0x9fd8ff, 220],
       [-10, 14, 0, 0x9fd8ff, 180],
       [16, 18, 0, 0xffc98a, 180],
-      [28, 10, 0, 0xffc98a, 140],
+      // the pumps, lit from the control-room side and under the crane girder
+      [27, 6, 9, 0xffc98a, 140],
     ] as const) {
       const p = new THREE.PointLight(col, i, 80, 2);
       p.position.set(x, y, z);
       this.scene.add(p);
+      this.pools.push(p);
     }
 
     // ---- post ----
@@ -129,6 +144,40 @@ export class Stage {
     this.composer.addPass(new OutputPass());
 
     addEventListener('resize', () => this.resize());
+  }
+
+  /**
+   * Put the whole stage somewhere else: sky, fog, lights, grade and bloom.
+   * Everything is set absolutely from the look, so applying one twice - or
+   * one after another - lands in the same place.
+   */
+  applyLook(look: Look) {
+    const u = this.sky.material.uniforms;
+    u.top.value.setHex(look.sky[0]);
+    u.mid.value.setHex(look.sky[1]);
+    u.bot.value.setHex(look.sky[2]);
+
+    const f = look.fog;
+    this.scene.fog = f.density !== undefined
+      ? new THREE.FogExp2(f.color, f.density)
+      : new THREE.Fog(f.color, f.near ?? 150, f.far ?? 520);
+    this.renderer.setClearColor(f.color);
+
+    this.hemi.color.setHex(look.hemi.sky);
+    this.hemi.groundColor.setHex(look.hemi.ground);
+    this.hemi.intensity = look.hemi.intensity;
+    this.key.color.setHex(look.key.color);
+    this.key.intensity = look.key.intensity;
+    this.fill.intensity = look.fill;
+    this.rim.intensity = look.rim;
+    const base = [220, 180, 180, 140];
+    this.pools.forEach((p, i) => { p.intensity = base[i] * look.pools; });
+
+    this.renderer.toneMappingExposure = look.exposure;
+    this.bloom.strength = look.bloom[0];
+    this.bloom.radius = look.bloom[1];
+    this.bloom.threshold = look.bloom[2];
+    this.scene.environmentIntensity = look.env;
   }
 
   resize() {

@@ -7,3 +7,6 @@ infra/deploy/.env
 
 # Screenshots from tools/shot.mjs
 *.png
+
+# Working screenshots from tools/shots.mjs and tools/story.mjs
+.shots/

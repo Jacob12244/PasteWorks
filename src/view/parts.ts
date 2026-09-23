@@ -172,7 +172,7 @@ export function platform(w: number, d: number, opts: PlatformOpts = {}): THREE.G
 /** Handrail run: two rails, posts, kickplate and a lit top rail. */
 export function railing(len: number, accent: number = C.cyan): THREE.Group {
   const g = new THREE.Group();
-  const mat = metal(C.steelLight, 0.5, 0.9);
+  const mat = metal(C.handrail, 0.5, 0.35);
 
   const top = tube(0.045, len, mat, 8);
   top.rotation.z = Math.PI / 2;
@@ -205,7 +205,7 @@ export function railing(len: number, accent: number = C.cyan): THREE.Group {
 /** Caged access ladder. */
 export function ladder(h: number): THREE.Group {
   const g = new THREE.Group();
-  const mat = metal(C.steelLight, 0.5, 0.9);
+  const mat = metal(C.handrail, 0.5, 0.35);
   for (const sx of [-0.28, 0.28]) {
     const r = tube(0.04, h, mat, 6);
     r.position.set(sx, h / 2, 0);
@@ -295,6 +295,105 @@ export function pipeSupport(h: number, w = 1.2): THREE.Group {
   const cap = box(w, 0.16, 0.5, mat);
   cap.position.y = h;
   g.add(cap);
+  return g;
+}
+
+// -------------------------------------------------------------- structure
+
+/** A straight structural member between two points: a brace, a leg, a tie. */
+export function member(
+  a: THREE.Vector3, b: THREE.Vector3, t: number, mat: THREE.Material = metal(C.steel, 0.65, 0.9),
+): THREE.Mesh {
+  const len = a.distanceTo(b);
+  const m = box(t, len, t, mat);
+  m.position.copy(a).lerp(b, 0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+  return m;
+}
+
+/** A grated deck on edge beams, with no rails and no legs - the frame does those. */
+export function deck(w: number, d: number, y: number): THREE.Group {
+  return platform(w, d, { y, rails: false, legs: false });
+}
+
+/** A handrail between two points at the same height, for decks with a gap in the edge. */
+export function railRun(a: THREE.Vector3, b: THREE.Vector3, accent: number = C.cyan): THREE.Group {
+  const len = Math.hypot(b.x - a.x, b.z - a.z);
+  const r = railing(len, accent);
+  r.position.set((a.x + b.x) / 2, a.y + 0.09, (a.z + b.z) / 2);
+  r.rotation.y = -Math.atan2(b.z - a.z, b.x - a.x);
+  return r;
+}
+
+/** A concrete plinth, which is what every piece of equipment really stands on. */
+export function plinth(w: number, h: number, d: number): THREE.Mesh {
+  const m = box(w, h, d, matte(C.concrete, 0.95));
+  m.position.y = h / 2;
+  return m;
+}
+
+/**
+ * Walk-mode collision that should not be drawn: a stair's ramp over its
+ * nosings, a wall where there is only a rail. The walker collides with
+ * anything carrying userData.collider, visible or not.
+ */
+export const COLLIDER = new THREE.MeshBasicMaterial({ visible: false });
+
+/**
+ * A straight stair flight rising along +x from the local origin to
+ * (run, rise): stringers, open grating treads, a handrail both sides, and an
+ * invisible ramp laid over the nosings so a walker glides up it rather than
+ * snagging on every tread.
+ */
+export function stairFlight(rise: number, run: number, width = 1.0): THREE.Group {
+  const g = new THREE.Group();
+  const len = Math.hypot(rise, run);
+  const ang = Math.atan2(rise, run);
+  const n = Math.max(2, Math.round(rise / 0.19));
+  const h = rise / n, going = run / n;
+
+  const steel = metal(C.steel, 0.6, 0.9);
+  for (const sz of [-1, 1]) {
+    const s = box(len, 0.3, 0.08, steel);
+    s.position.set(run / 2, rise / 2 - 0.16, (sz * width) / 2);
+    s.rotation.z = ang;
+    g.add(s);
+  }
+
+  const tex = grating().clone();
+  tex.needsUpdate = true;
+  tex.repeat.set(0.5, width / 2);
+  const treadMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8, metalness: 0.7 });
+  for (let i = 1; i < n; i++) {
+    const t = box(going + 0.04, 0.05, width - 0.06, treadMat);
+    t.position.set((i + 0.5) * going, i * h - 0.025, 0);
+    g.add(t);
+    // the yellow nosing strip every stair tread has
+    const nose = box(0.05, 0.052, width - 0.06, metal(C.handrail, 0.5, 0.35));
+    nose.position.set(i * going + 0.03, i * h - 0.025, 0);
+    g.add(nose);
+  }
+
+  const rail = metal(C.handrail, 0.5, 0.35);
+  for (const sz of [-1, 1]) {
+    for (const up of [0.95, 0.5]) {
+      const r = tube(up > 0.9 ? 0.045 : 0.035, len, rail, 8);
+      r.position.set(run / 2, rise / 2 + up, (sz * width) / 2);
+      r.rotation.z = ang - Math.PI / 2;
+      g.add(r);
+    }
+    for (const f of [0.08, 0.5, 0.92]) {
+      const post = tube(0.04, 0.95, rail, 6);
+      post.position.set(run * f, rise * f + 0.475, (sz * width) / 2);
+      g.add(post);
+    }
+  }
+
+  const ramp = new THREE.Mesh(new THREE.BoxGeometry(len, 0.04, width), COLLIDER);
+  ramp.position.set(run / 2, rise / 2 - 0.02, 0);
+  ramp.rotation.z = ang;
+  ramp.userData.collider = true;
+  g.add(ramp);
   return g;
 }
 

@@ -8,12 +8,14 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "verify": "npm run verify:check && npm run verify:scenarios && npm run verify:hard && npm run verify:solve",
+    "verify": "npm run verify:check && npm run verify:scenarios && npm run verify:hard && npm run verify:solve && npm run verify:worlds",
     "verify:check": "esbuild tools/check.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/check.mjs --log-level=error && node node_modules/.cache/check.mjs",
     "verify:scenarios": "esbuild tools/scenarios.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/scen.mjs --log-level=error && node node_modules/.cache/scen.mjs",
     "verify:solve": "esbuild tools/solve.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/solve.mjs --log-level=error && node node_modules/.cache/solve.mjs",
     "typecheck": "tsc --noEmit",
-    "verify:hard": "esbuild tools/hardmode.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/hm.mjs --log-level=error && node node_modules/.cache/hm.mjs"
+    "verify:hard": "esbuild tools/hardmode.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/hm.mjs --log-level=error && node node_modules/.cache/hm.mjs",
+    "verify:worlds": "esbuild tools/worlds.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/worlds.mjs --log-level=error && node node_modules/.cache/worlds.mjs --quick",
+    "solve:worlds": "esbuild tools/worlds.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/worlds.mjs --log-level=error && node node_modules/.cache/worlds.mjs"
   },
   "dependencies": {
     "three": "^0.169.0"

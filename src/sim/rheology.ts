@@ -148,6 +148,8 @@ export function pipeline(
   tauY: number,
   eta: number,
   densityTonnesPerM3: number,
+  /** only the static head feels local gravity; friction does not care */
+  g = G,
 ): PipeResult {
   const D = diaMm / 1000;
   const A = (Math.PI * D * D) / 4;
@@ -182,7 +184,7 @@ export function pipeline(
   const gradPa = (4 * tauW) / D; // Pa per m
   const gradient = gradPa / 1000; // kPa/m
   const friction = gradient * lengthM;
-  const staticRecovery = (rho * G * dropM) / 1000; // kPa
+  const staticRecovery = (rho * g * dropM) / 1000; // kPa
   return {
     velocity: V,
     wallShear: tauW,
