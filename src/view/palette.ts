@@ -102,7 +102,7 @@ export function glass(color = 0x9fd8ff, opacity = 0.16): THREE.MeshStandardMater
 
 /** Process liquor surface - slightly emissive so it reads in the dark. */
 export function liquor(color: number, opacity = 1): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
+  const m = new THREE.MeshStandardMaterial({
     color,
     emissive: color,
     emissiveIntensity: 0.20,
@@ -111,4 +111,6 @@ export function liquor(color: number, opacity = 1): THREE.MeshStandardMaterial {
     transparent: opacity < 1,
     opacity,
   });
+  m.userData.fluid = true;
+  return m;
 }

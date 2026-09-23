@@ -145,12 +145,14 @@ export class CollectorFront extends Unit {
     const light = new THREE.PointLight(0xffe6b0, 70, 40, 2);
     light.position.set(0, 4, 10);
     this.collector.add(light);
+    this.collector.userData.noCollide = true;
     g.add(this.collector);
 
     // ---- the jumper hose, re-laid each frame between collector and screen
     const hoseMat = matte(0x2a3036, 0.8);
     for (let i = 0; i < 18; i++) {
       const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1, 10), hoseMat);
+      seg.userData.noCollide = true;
       g.add(seg);
       this.hose.push(seg);
     }
@@ -387,6 +389,7 @@ export class ReclaimFront extends Unit {
     for (let i = 0; i < 10; i++) {
       const f = cyl(0.55, 0.55, 1.4, matte(0xe0b830, 0.7), 10);
       f.rotation.z = Math.PI / 2;
+      f.userData.noCollide = true;
       g.add(f);
       this.floats.push(f);
     }
@@ -627,6 +630,7 @@ export class ScoopFront extends Unit {
       bucket.add(bk);
       bucket.position.set(1.8, 0.8, 0);
       lg.add(bucket);
+      lg.userData.noCollide = true;
       g.add(lg);
       this.loaders.push({ g: lg, bucket, pile: i * 2, phase: i * 0.33, speed: 0.045 + i * 0.008 });
     }

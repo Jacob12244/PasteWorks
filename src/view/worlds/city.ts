@@ -206,6 +206,7 @@ export function buildCity(root: THREE.Group): Dressing {
     const under = box(2.2, 0.08, 1.0, glow(i % 2 ? 0xff4fd8 : 0x35e0d0, 2));
     under.position.y = -0.45;
     g.add(under);
+    g.userData.noCollide = true;
     root.add(g);
     cars.push({ mesh: g, lane: i % LANES.length, s: r() * Math.PI * 2, v: (0.05 + r() * 0.05) * (i % 3 ? 1 : -1) });
   }

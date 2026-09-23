@@ -389,8 +389,13 @@ export function stairFlight(rise: number, run: number, width = 1.0): THREE.Group
     }
   }
 
-  const ramp = new THREE.Mesh(new THREE.BoxGeometry(len, 0.04, width), COLLIDER);
-  ramp.position.set(run / 2, rise / 2 - 0.02, 0);
+  // A touch above the nosings, so it meets the landing's deck flush instead
+  // of ducking under the landing's edge beam, and run on at the bottom until
+  // it meets the floor.
+  const lift = 0.1, lead = lift / Math.tan(ang);
+  const rampLen = Math.hypot(run + lead, rise + lift);
+  const ramp = new THREE.Mesh(new THREE.BoxGeometry(rampLen, 0.04, width), COLLIDER);
+  ramp.position.set((run - lead) / 2, (rise + lift) / 2 - 0.02, 0);
   ramp.rotation.z = ang;
   ramp.userData.collider = true;
   g.add(ramp);

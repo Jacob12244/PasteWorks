@@ -134,9 +134,11 @@ export class Craters extends Unit {
     });
     const fg = new THREE.CylinderGeometry(1, 0.01, 1, 48);
     this.fill = new THREE.Mesh(fg, this.fillMat);
+    this.fill.userData.noCollide = true;
     g.add(this.fill);
     this.skin = new THREE.Mesh(new THREE.CircleGeometry(1, 48), glowUnique(C.amber, 0.25));
     this.skin.rotation.x = -Math.PI / 2;
+    this.skin.userData.noCollide = true;
     g.add(this.skin);
 
     // the rest of the field: some done and greening, some still to do
@@ -227,6 +229,7 @@ export function buildWaste(root: THREE.Group): Dressing {
   // ---- towers of compacted rubbish, stacked by whatever had the job before
   const cube = new THREE.BoxGeometry(1.8, 1.8, 1.8);
   const cubes = new THREE.InstancedMesh(cube, new THREE.MeshStandardMaterial({ roughness: 0.95 }), 1600);
+  cubes.userData.solid = true;
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const e = new THREE.Euler();

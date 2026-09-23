@@ -33,6 +33,7 @@ title screen and the opening.
 node tools/shot.mjs "http://localhost:5180/?s=today&intro=0" shot.png 6000 "PW.hud.onView('stope')"
 node tools/shots.mjs "http://localhost:5180/?s=psyche&intro=0" out '[{"name":"pit","pos":[-150,26,44],"at":[-118,4,-8]}]'
 node tools/story.mjs undercity story-undercity.png
+node tools/walk.mjs today psyche
 ```
 
 - `shot.mjs` — one screenshot, after running a script.
@@ -41,14 +42,21 @@ node tools/story.mjs undercity story-undercity.png
 - `story.mjs` — a contact sheet of a world's opening, the first and last frame
   of every beat, with the consoles hidden. A beat whose camera lands on nothing
   is obvious at a glance.
+- `walk.mjs` — walks every world on foot: out of the door and through the
+  gate, a jump, and up both flights of the tower stair. Headless Chrome cannot
+  take the pointer and renders too slowly to walk in real time, so it
+  unpauses the walker by hand and steps it at 60 fps inside the page. Exits
+  non-zero if anything fails.
 
-The page exposes `window.PW = { plant, stage, world, hud, scada, sitDown, CONTROL, THREE, scenario, cut, look }`
+The page exposes `window.PW = { plant, stage, world, hud, scada, sitDown, CONTROL, THREE, scenario, cut, look, walker, walk }`
 for exactly this sort of poking about. A few that are handy:
 
 ```js
 PW.scenario.id;                             // which world
 PW.cut?.skip();                             // end the opening
 PW.look(40, 10);                            // turn the operator's head, degrees
+PW.walk(true);                              // out of the door, on foot
+PW.walker.respawn();                        // back to the door
 PW.plant.sp.running = true;
 for (let i = 0; i < 900; i++) PW.plant.step(30);   // fast-forward 7.5 h
 PW.sitDown(true);                           // into the control room

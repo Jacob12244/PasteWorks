@@ -93,6 +93,7 @@ export class Deliveries {
   private launch(kind: 'binder' | 'media') {
     const target = (kind === 'binder' ? this.binderAt : this.mediaAt).clone();
     const vehicle = this.vehicle(kind);
+    vehicle.userData.noCollide = true;
     this.root.add(vehicle);
     const trip: Trip = { kind, age: 0, vehicle, target };
     if (this.world === 'waste' || this.world === 'ocean' || this.world === 'space') {

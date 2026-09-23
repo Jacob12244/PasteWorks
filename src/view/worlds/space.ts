@@ -175,6 +175,7 @@ function regolith(): THREE.Group {
   const rockGeo = new THREE.DodecahedronGeometry(1, 0);
   const rockMat = metal(0x4a4846, 0.55, 0.6);
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, 260);
+  rocks.userData.solid = true;
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   let n = 0;
@@ -369,6 +370,7 @@ export class MassDriver extends Unit {
       const mesh = new THREE.Mesh(slugGeo, mat);
       mesh.visible = false;
       mesh.rotation.z = RAIL.angle;
+      mesh.userData.noCollide = true;
       g.add(mesh);
       this.slugs.push({ mesh, s: 0, v: 0, live: false, free: false, age: 0 });
     }
@@ -546,6 +548,7 @@ function pit(root: THREE.Group): { trucks: Truck[]; a: THREE.Vector3; b: THREE.V
         tg.add(wh);
       }
     }
+    tg.userData.noCollide = true;
     root.add(tg);
     trucks.push({ g: tg, k: i / 3, v: 0.05 });
   }

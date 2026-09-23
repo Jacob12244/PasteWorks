@@ -359,6 +359,8 @@ export class Scada {
   onRun: () => void = () => {};
   /** back to the title screen */
   onLeave: () => void = () => {};
+  /** out of the chair and out of the door, on foot */
+  onWalk: () => void = () => {};
 
   constructor(private plant: Plant, private sc: Scenario) {
     // This site's own name for where the paste goes, on the mimic and trends.
@@ -475,6 +477,10 @@ export class Scada {
     worlds.title = 'Back to the choice of worlds';
     worlds.onclick = () => this.onLeave();
     lintel.append(worlds);
+    const walk = el('button', 'sc-centre', 'WALK OUT  [F]');
+    walk.title = 'Out of the door and round the plant on foot';
+    walk.onclick = () => this.onWalk();
+    if (!matchMedia('(pointer: coarse)').matches) lintel.append(walk);
     const exit = el('button', 'sc-exit', 'LEAVE THE DESK  [Esc]');
     exit.onclick = () => this.onExit();
     lintel.append(exit);

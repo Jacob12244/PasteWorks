@@ -53,6 +53,8 @@ export class HUD {
   onView: (v: 'overview' | 'plant' | 'stope' | 'upstream' | 'control') => void = () => {};
   /** back to the title screen */
   onLeave: () => void = () => {};
+  /** out of the orbit view and onto your own two feet */
+  onWalk: () => void = () => {};
   /** fired whenever a slider here moves, so the SCADA mirror can follow */
   onSetpoint: () => void = () => {};
 
@@ -117,7 +119,7 @@ export class HUD {
     d.innerHTML = 'Drag to orbit &middot; scroll to zoom &middot; '
       + '<b style="color:var(--cyan)">click any unit</b> to inspect &middot; '
       + '<kbd>Space</kbd> run/stop &middot; <kbd>1</kbd>&ndash;<kbd>5</kbd> speed &middot; <kbd>O</kbd>/<kbd>P</kbd>/<kbd>U</kbd>/<kbd>G</kbd> views &middot; '
-      + '<kbd>C</kbd> control room';
+      + '<kbd>C</kbd> control room &middot; <kbd>F</kbd> walk';
     return d;
   }
 
@@ -158,6 +160,12 @@ export class HUD {
       views.append(btn);
     }
     b.append(views);
+
+    const walk = el('button', 'walk', '&#128694;&nbsp; Walk the plant &nbsp;<kbd>F</kbd>');
+    walk.title = 'First person: walk the site, climb the tower';
+    walk.onclick = () => this.onWalk();
+    // walking wants a keyboard and a mouse to capture; a phone has neither
+    if (!matchMedia('(pointer: coarse)').matches) b.append(walk);
 
     p.append(b);
     return p;
@@ -340,6 +348,11 @@ export class HUD {
   /** The control room takes the screen over; the side panels get out of the way. */
   setPanelsVisible(on: boolean) {
     this.ui.style.display = on ? '' : 'none';
+  }
+
+  /** On foot: everything but the inspector and the numbers along the bottom goes. */
+  setWalking(on: boolean) {
+    this.ui.classList.toggle('walking', on);
   }
 
   showBanner(title: string, sub: string, colour: string) {

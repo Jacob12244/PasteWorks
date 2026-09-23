@@ -215,6 +215,13 @@ export class Stage {
     this.freeLook = false;
   }
 
+  /**
+   * Someone else is driving the camera - the walker. Orbit is stood down the
+   * same way as for free look, because OrbitControls re-aims the camera at its
+   * target on every update whether it is enabled or not.
+   */
+  manual = false;
+
   /** Absolute look angles, radians. Applied with a little damping. */
   setLook(yaw: number, pitch: number) {
     this.yawTo = yaw;
@@ -242,7 +249,7 @@ export class Stage {
       this.pitch += (this.pitchTo - this.pitch) * k;
       this.camera.position.copy(this.eye);
       this.camera.rotation.set(this.pitch, this.yaw, 0);
-    } else {
+    } else if (!this.manual) {
       this.controls.update();
     }
     this.composer.render();

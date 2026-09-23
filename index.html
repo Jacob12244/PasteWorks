@@ -211,6 +211,11 @@
     font-size: 11px; color: var(--muted); padding: 7px 14px;
     background: var(--panel); border: 1px solid var(--line-soft); border-radius: 20px;
   }
+  .walk { width: 100%; margin-top: 7px; }
+  .walk kbd {
+    font-family: var(--mono); font-size: 10px; background: #1a2532;
+    border: 1px solid var(--line-soft); border-radius: 4px; padding: 0 5px; margin-left: 4px;
+  }
   #hint kbd {
     font-family: var(--mono); font-size: 10px; background: #1a2532;
     border: 1px solid var(--line-soft); border-radius: 4px; padding: 1px 5px; margin: 0 2px;
@@ -669,12 +674,57 @@
   }
   .cs-obj b { font-size: clamp(22px, 2.6vw, 36px); font-weight: 400; color: #fff; line-height: 1.3; }
   .cs-obj span { font-size: 13px; color: var(--muted); }
+
+  /* ---------------- walking ---------------- */
+  /* on foot, the side console gets out of the way: the unit you are looking
+     at and the numbers along the bottom are all that stay */
+  #ui.walking > :not(#inspect):not(#kpis) { display: none !important; }
+  #walk { position: fixed; inset: 0; pointer-events: none; display: none; }
+  #walk.on { display: block; }
+  #walk .cross {
+    position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+    border-radius: 50%; background: rgba(230, 240, 250, .85); box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
+  }
+  #walk .cross.aim { width: 14px; height: 14px; margin: -7px 0 0 -7px; background: none; border: 2px solid var(--accent); }
+  #walk .prompt {
+    position: absolute; left: 50%; top: calc(50% + 22px); transform: translateX(-50%);
+    font-size: 12px; color: var(--txt); white-space: nowrap; padding: 5px 11px; border-radius: 14px;
+    background: var(--panel); border: 1px solid var(--line-soft); opacity: 0; transition: opacity .15s;
+  }
+  #walk .prompt.show { opacity: 1; }
+  #walk kbd, #walk .card kbd {
+    font-family: var(--mono); font-size: 10px; background: #1a2532;
+    border: 1px solid var(--line-soft); border-radius: 4px; padding: 1px 5px; margin: 0 2px; color: var(--txt);
+  }
+  #walk .keys {
+    position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+    font-size: 11px; color: var(--muted); padding: 7px 14px; white-space: nowrap;
+    background: var(--panel); border: 1px solid var(--line-soft); border-radius: 20px;
+  }
+  #walk .note {
+    position: absolute; left: 50%; top: 58px; transform: translateX(-50%);
+    font-size: 13px; color: var(--accent); letter-spacing: .04em; opacity: 0; transition: opacity .6s;
+    text-shadow: 0 1px 8px #000;
+  }
+  #walk .note.show { opacity: 1; }
+  #walk .card {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    pointer-events: auto; display: none; text-align: center; padding: 22px 26px; min-width: 300px;
+    background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px;
+  }
+  #walk.paused .card { display: block; }
+  #walk.paused .cross, #walk.paused .prompt { display: none; }
+  #walk .card b { display: block; font-size: 15px; letter-spacing: .14em; color: var(--accent); margin-bottom: 6px; }
+  #walk .card p { margin: 0 0 16px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+  #walk .card .row { display: flex; gap: 10px; justify-content: center; }
+  #walk .card button { padding: 8px 16px; }
 </style>
 </head>
 <body>
   <canvas id="view"></canvas>
   <div id="ui"></div>
   <div id="banner"></div>
+  <div id="walk"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

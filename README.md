@@ -459,6 +459,55 @@ the stop button off the screen would be a poor trade for a little more realism.
 Look is clamped at 74.5° of yaw either way, about 23° up and 24° down. `↻ Centre` squares you back up; `Esc` or
 **Leave the desk** puts you back outside.
 
+## Walking the plant
+
+Press **F** — or *Walk the plant* on the console, or *Walk out* in the control
+room — and you step out of the control-room door on foot, through the gate in
+the pad kerb and onto the plant. Climb the mixing tower, stand on the mixer
+deck, walk under the pumps. The plant keeps running while you do: the numbers
+along the bottom stay up, and **E** on anything opens its inspector where you
+are standing. **E** at the control room takes you back to the desk.
+
+```
+  mouse          look                 E       inspect what the crosshair is on
+  W A S D        walk                 R       back to the door
+  Shift          run                  Esc     let go of the mouse
+  Space          jump                 F       stop walking
+```
+
+It feels different in each world. On the seabed you are in a hardsuit at 440
+bar — slow, heavy, and a jump is a long float down. On Psyche you wear mag
+boots that hold you to the iron while you walk; jump and they let go, and you
+go up nearly five metres.
+
+The collision world is the plant itself — there is no second, simplified
+model to keep in step with the one you see. It is built the first time
+someone steps out, since most people never do:
+
+- **What you bump into** is every mesh in the world, less what should not be
+  solid: anything see-through (glass, domes, light cones), process liquor
+  (walk into a thickener and you go in it, not across it), the sky, and
+  anything that moves, which carries `userData.noCollide`. The ground and the
+  stair ramps carry `userData.collider` to be let in regardless; instanced
+  meshes stay out unless they carry `userData.solid` — the asteroid rocks and
+  the rubbish cubes do, the fish do not.
+- **It is a grid, not an octree.** three's `Octree` does the same job, but on
+  130,000 triangles it took seven seconds to build — a handful of huge
+  triangles (the ground, the pad) land in every leaf they cross, and the tree
+  splits sixteen levels deep everywhere they overlap. Bucketing triangles
+  into 1.5 m cells is one pass, and the few big ones go on a short list
+  checked by bounding box. The capsule-triangle test is still three's.
+- **You are a capsule** 1.8 m tall and 0.7 m across, eyes at 1.62 m, stepped
+  five times a frame. Floors push you straight up rather than along their
+  normal — along the normal, a stair is a slide and standing still on one
+  carries you down it. Kerbs up to 45 cm you step up without jumping.
+- **Stairs carry an invisible ramp** laid just over the nosings, so you glide
+  up them rather than catching on every tread, and it meets each landing
+  flush rather than ducking under the landing's edge beam.
+
+`node tools/walk.mjs` walks every world headlessly — out of the door, a jump,
+and all the way up the tower stair.
+
 ## Running it
 
 ```bash
@@ -477,8 +526,8 @@ control room; `Esc` leaves the desk and **↺ Worlds** goes back to the title
 screen. Outside, drag to orbit, scroll to zoom, click any unit to inspect it.
 `Space` run/stop, `1`–`5` time compression (pause → 240×), `O`/`P`/`U` for the
 overview, plant and destination views, `G` for the front end (the mill, the
-collector, the old dam or the piles), `C` for the control room, `Esc` to
-deselect or to leave the desk.
+collector, the old dam or the piles), `C` for the control room, `F` to walk,
+`Esc` to deselect or to leave the desk.
 
 In the control room, drag to look around — you turn but never move.
 
@@ -558,9 +607,11 @@ src/
     world.ts       site layout and interconnecting pipework, per flowsheet
     room.ts        what is on the control room walls, world by world, and the phone
     scene.ts       renderer, IBL, per-world lighting, bloom
+    walk.ts        on foot: the collision grid, the capsule, how each world feels
   ui/
     welcome.ts     the title screen
     cutscene.ts    the opening: letterbox, typed text, cuts, objective card
+    walkui.ts      the crosshair, the prompt, the keys, the pause card
     setpoints.ts   the loops, described once, shared by both consoles
     hud.ts         side console, alarm log, per-unit inspector
     scada.ts       the control room: warnings, mimic, trends, video wall
@@ -595,6 +646,8 @@ A few things worth knowing if you pick it up:
   white paper and lit by the room light is a white rectangle with a halo. Every
   light surface in the control room is printed on card instead, around 0.70
   sRGB, with the emissive turned right down.
+- **`Capsule.copy()` returns nothing.** The typings say it returns the
+  capsule; the code does not. `const c = tmp.copy(other)` is `undefined`.
 - **Canvases must be sized from the content box.** `getBoundingClientRect`
   includes the padding; a canvas sized from it sits inside the padding and
   overhangs its panel by exactly that much — which is the last column of

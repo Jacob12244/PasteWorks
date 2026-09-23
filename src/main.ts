@@ -6,6 +6,8 @@ import { HUD } from './ui/hud';
 import { Scada } from './ui/scada';
 import { Welcome } from './ui/welcome';
 import { Cutscene } from './ui/cutscene';
+import { WalkUI } from './ui/walkui';
+import { Walker, FEEL } from './view/walk';
 import { SCENARIOS, applyScenario, scenarioById, type Scenario } from './scenario';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
@@ -76,6 +78,96 @@ function start(sc: Scenario, intro: boolean) {
     hud.selectedId = id;
     world.select(id ? world.get(id) ?? null : null);
   };
+
+  // ------------------------------------------------------------------ on foot
+
+  const feel = FEEL[sc.look.world];
+  const walker = new Walker(stage.camera, canvas, feel);
+  const walkUi = new WalkUI();
+  let walking = false;
+  let pausedAt = 0;
+  /** Out of the control room door, facing the plant - outside the bubble, on the seabed. */
+  const DOOR = new THREE.Vector3(CONTROL.x, 0.05, CONTROL.z - (sc.look.bubble ? 11.5 : 7.5));
+  const WALK_FOV = 72;
+
+  let surveying = false;
+
+  function walk(on: boolean) {
+    if (on === walking || cut?.playing || surveying) return;
+    if (on) {
+      sitDown(false, false);
+      // The collision world is built from the plant itself, the first time
+      // anyone steps out - most people never do, and it is not free. Say so,
+      // let that frame paint, then build and go.
+      if (!walker.ready) {
+        surveying = true;
+        walkUi.show(true);
+        walkUi.say('Surveying the site...', 60000);
+        setTimeout(() => {
+          const built = walker.prepare(world.root);
+          if (built) console.info(`walk: ${built.triangles} triangles in ${built.ms.toFixed(0)} ms`);
+          surveying = false;
+          walk(true);
+        }, 60);
+        return;
+      }
+      walking = true;
+      world.select(null);
+      hud.selectedId = null;
+      hud.setWalking(true);
+      walkUi.show(true);
+      stage.controls.autoRotate = false;
+      stage.controls.enabled = false;
+      stage.manual = true;
+      stage.camera.near = 0.15;
+      stage.setFov(WALK_FOV);
+      walker.enter(DOOR, 0);
+      walkUi.say(feel.note);
+    } else {
+      walking = false;
+      const eye = walker.eye, fwd = walker.forward;
+      walker.exit();
+      walkUi.show(false);
+      hud.setWalking(false);
+      world.select(null);
+      hud.selectedId = null;
+      stage.manual = false;
+      stage.camera.near = 0.5;
+      stage.setFov(SITE_FOV);
+      stage.controls.enabled = true;
+      // hand the orbit camera over from wherever you were standing
+      stage.controls.target.copy(eye).addScaledVector(fwd, 8);
+      stage.camera.position.copy(eye).addScaledVector(fwd, -10).add(new THREE.Vector3(0, 7, 0));
+    }
+  }
+  walker.onPause = (p) => {
+    pausedAt = performance.now();
+    walkUi.setPaused(p);
+  };
+  walkUi.onResume = () => walker.lock();
+  walkUi.onStop = () => walk(false);
+  hud.onWalk = () => walk(true);
+  scada.onWalk = () => walk(true);
+
+  /** what the crosshair is on, if it is near enough to reach */
+  const aim = () => world.pick(0, 0, 18);
+
+  function interact() {
+    const u = aim();
+    if (u?.id === 'control') { walk(false); sitDown(true); return; }
+    // looking at nothing, or at the thing already open: put the clipboard away
+    hud.onSelect(u && u.id !== hud.selectedId ? u.id : null);
+  }
+
+  function walkPrompt() {
+    const u = aim();
+    walkUi.setPrompt(
+      u?.id === 'control' ? '<kbd>E</kbd> take the desk'
+        : u && u.id !== hud.selectedId ? '<kbd>E</kbd> inspect ' + u.name
+        : hud.selectedId ? '<kbd>E</kbd> put the clipboard away'
+        : null,
+    );
+  }
 
   /**
    * The site is a different shape in every world - the mass driver runs 150 m
@@ -234,6 +326,11 @@ function start(sc: Scenario, intro: boolean) {
   });
   canvas.addEventListener('pointerup', (e) => {
     if (cut?.playing) return;
+    if (walking) {
+      if (walker.paused) walker.lock();
+      else if (e.button === 0) interact();
+      return;
+    }
     // ignore the pointerup that ends an orbit drag
     const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
     if (moved > 5 || performance.now() - downAt.t > 450) return;
@@ -254,8 +351,25 @@ function start(sc: Scenario, intro: boolean) {
       if (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter') { e.preventDefault(); cut.skip(); }
       return;
     }
+    if (walking) {
+      switch (e.key) {
+        case ' ': e.preventDefault(); return; // jump - the walker has it
+        case 'e': case 'E': if (!walker.paused) interact(); return;
+        case 'r': case 'R': walker.respawn(); return;
+        case 'f': case 'F': walk(false); return;
+        case 'c': case 'C': walk(false); sitDown(true); return;
+        // the Esc that took the mouse back is not also a request to stop
+        case 'Escape': if (walker.paused && performance.now() - pausedAt > 400) walk(false); return;
+        case 'o': case 'O': case 'p': case 'P': case 'u': case 'U': case 'g': case 'G':
+          walk(false);
+          break;
+        default:
+          if (!/^[1-5]$/.test(e.key)) return;
+      }
+    }
     switch (e.key) {
       case ' ': e.preventDefault(); hud.toggleRun(); break;
+      case 'f': case 'F': walk(true); break;
       case '1': hud.setSpeed(0); break;
       case '2': hud.setSpeed(1); break;
       case '3': hud.setSpeed(10); break;
@@ -326,6 +440,7 @@ function start(sc: Scenario, intro: boolean) {
     const t = plant.telemetry;
     world.update(t, dt);
     milestones(t);
+    if (walking) walker.update(dt);
 
     stage.setLook(seatedYaw, seatedPitch);
     trackLook();
@@ -335,6 +450,7 @@ function start(sc: Scenario, intro: boolean) {
       hudAccum = 0;
       if (scada.open) scada.update(t, hud.speed);
       else if (!cut?.playing) hud.update(t, world.selected?.name ?? null);
+      if (walking && !walker.paused) walkPrompt();
     }
 
     stage.render();
@@ -371,7 +487,7 @@ function start(sc: Scenario, intro: boolean) {
 
   // Handy from the browser console: PW.plant.sp, PW.stage.camera, PW.world.units
   (window as any).PW = {
-    plant, stage, world, hud, scada, sitDown, CONTROL, THREE, scenario: sc,
+    plant, stage, world, hud, scada, sitDown, CONTROL, THREE, scenario: sc, walker, walk,
     get cut() { return cut; },
     /** turn the operator's head from the console, in degrees */
     look: (yawDeg: number, pitchDeg = 0) => {

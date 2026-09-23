@@ -730,7 +730,7 @@ export class World {
       p.position.set(x, kind === 'ocean' ? 4 + i * 1.7 : y, z);
       p.rotation.y = (i * 2.3) % 6;
       this.root.add(p);
-      if (kind === 'ocean') this.rovs.push(p);
+      if (kind === 'ocean') { p.userData.noCollide = true; this.rovs.push(p); }
     });
 
     // a light mast or two
@@ -812,10 +812,11 @@ export class World {
   }
 
   /** Click-to-inspect. */
-  pick(nx: number, ny: number): Unit | null {
+  pick(nx: number, ny: number, maxDist = Infinity): Unit | null {
     this.raycaster.setFromCamera(new THREE.Vector2(nx, ny), this.stage.camera);
     const hits = this.raycaster.intersectObjects(this.pickables, false);
     for (const h of hits) {
+      if (h.distance > maxDist) break;
       // hidden units (the upstream circuit in standard mode) are still in
       // the pick list, so walk up and check the branch is actually visible
       let vis = true;

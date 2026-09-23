@@ -134,6 +134,7 @@ export class Furrow extends Unit {
     });
     this.fill = new THREE.Mesh(new THREE.BoxGeometry(1, D, W - 0.1), this.fillMat);
     this.fill.position.set(FURROW.x0, -0.4 - D / 2, 0);
+    this.fill.userData.noCollide = true;
     g.add(this.fill);
 
     // ---- the crawler, on the north lip
@@ -163,6 +164,7 @@ export class Furrow extends Unit {
     light.position.set(-1.5, 3, -6);
     this.crawler.add(light);
     this.crawler.position.set(FURROW.x0, 0, FURROW.z1 + 3.2);
+    this.crawler.userData.noCollide = true;
     g.add(this.crawler);
 
     // ---- furrows 1 to 6, already put back
@@ -332,6 +334,7 @@ function jellyfish(root: THREE.Group, r: () => number): Jelly[] {
     g.position.copy(home);
     g.scale.setScalar(0.8 + r() * 1.2);
     root.add(g);
+    g.userData.noCollide = true;
     out.push({ g, mat, home, ph: r() * 6 });
   }
   return out;

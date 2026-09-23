@@ -97,6 +97,9 @@ export function buildGround(
   plain.rotation.x = -Math.PI / 2;  // shape (x, y) -> world (x, -y): hence the -z above
   plain.position.y = -0.4;
   plain.receiveShadow = true;
+  // the ground is far bigger than anything else a walker collides with,
+  // so it is let in by name rather than by size
+  plain.userData.collider = true;
   g.add(plain);
 
   // lit collar around the cut so the section edge reads as deliberate
@@ -134,14 +137,29 @@ export function buildGround(
   grid.position.set(-22, 0.02, 0);
   g.add(grid);
 
-  // pad kerb with a lit edge
+  // Pad kerb with a lit edge - and a gate in the south side where the path
+  // from the control room comes in, because people walk to work.
+  const X0 = -22 - (CUT_X + 84) / 2, X1 = -22 + (CUT_X + 84) / 2;
+  const GATE = -14, GW = 3.2;
   for (const sz of [-37, 37]) {
-    const kerb = box(CUT_X + 84, 0.45, 0.6, matte(0x30373f, 0.95));
-    kerb.position.set(-22, 0.2, sz);
-    g.add(kerb);
-    const lit = strip(CUT_X + 80, spec.kerb, 0.07, 1.1);
-    lit.position.set(-22, 0.44, sz);
-    g.add(lit);
+    const runs = sz > 0 ? [[X0, GATE - GW], [GATE + GW, X1]] : [[X0, X1]];
+    for (const [a, b] of runs) {
+      const kerb = box(b - a, 0.45, 0.6, matte(0x30373f, 0.95));
+      kerb.position.set((a + b) / 2, 0.2, sz);
+      g.add(kerb);
+      const lit = strip(b - a - 0.4, spec.kerb, 0.07, 1.1);
+      lit.position.set((a + b) / 2, 0.44, sz);
+      g.add(lit);
+    }
+  }
+  const path = box(2 * GW - 0.4, 0.4, 9.4, matte(0x3a4048, 0.95));
+  path.position.set(GATE, -0.2, 37 + 4.7);
+  g.add(path);
+  for (const sx of [-1, 1]) {
+    const edge = strip(9.2, spec.kerb, 0.05, 0.7);
+    edge.rotation.y = Math.PI / 2;
+    edge.position.set(GATE + sx * (GW - 0.25), 0.02, 37 + 4.7);
+    g.add(edge);
   }
 
   return g;
