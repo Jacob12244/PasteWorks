@@ -5,19 +5,20 @@
  *    land where the example says it does.
  * 2. Every contract must be winnable: a plain designer starts from the
  *    starter plant and fixes whatever fails - a bigger machine, a tighter
- *    setting, more cyclones - until every station passes, the way a player
- *    would. A contract it cannot close is a bug in the contract generator or
- *    in the catalogue, not a hard level.
+ *    setting, more cyclones, a wider thickener, more binder - until every
+ *    station passes, the way a player would. A contract it cannot close is a
+ *    bug in the contract generator or in the catalogue, not a hard level.
  *
  *   npm run verify:sizing            50 contracts
  *   npm run verify:sizing -- 500     more
  */
-import { S, type Contract, type Design } from '../src/sizing/circuit';
+import { S, underflowCw, type Contract, type Design } from '../src/sizing/circuit';
 import { summarise, type Summary } from '../src/sizing/summary';
 import { contractFor, starterDesign } from '../src/sizing/contract';
 import { STATIONS, stationPasses } from '../src/sizing/stations';
 import { costsFor } from '../src/sizing/costs';
-import { APERTURES, CONES, CYCLONES, JAWS, SCREENS } from '../src/sizing/equipment';
+import { APERTURES, CONES, CYCLONES, JAWS, PASTE_PUMPS, PIPES, PRESS_PLATES, RAKE_DRIVES, SCREENS } from '../src/sizing/equipment';
+import { pumpDuty } from '../src/sizing/backfill';
 
 let failed = 0;
 const check = (name: string, ok: boolean, detail = '') => {
@@ -37,10 +38,12 @@ const EXAMPLE: Contract = {
   breakage: 0.94,
   p80: 106e-6,
   overflowCw: [0.3, 0.38],
+  // the crushing example stops at the cyclones; any backfill will do
+  backfill: contractFor(1).backfill,
 };
 
 const EXAMPLE_DESIGN: Design = {
-  ...starterDesign(),
+  ...starterDesign(EXAMPLE),
   grizzly: 0.15,
   jawCss: 0.125,
   secCss: 0.038,
@@ -111,6 +114,39 @@ function nextMove(c: Contract, d: Design, s: Summary): Design | null {
   if (of.cw < c.overflowCw[0]) fixes.push((d) => up(d, 'cycFeedCw', 0.62, 0.01) ?? up(d, 'cycUfCw', 0.76, 0.01));
   // too much pressure: more cyclones
   if (res(s, 'CYC', 'pressure') > 200e3) fixes.push((d) => up(d, 'cyclones', 24));
+
+  // the paste plant, once the circuit before it has settled
+  if (s.converged) {
+    const thinner = (d: Design): Design | null => {
+      const next = d.ufPump + 5 / 3600;
+      return underflowCw(c, next) >= 0.45 ? { ...d, ufPump: next } : null;
+    };
+    const wider = (d: Design) => up(d, 'thDiam', 45, 1);
+    if (res(s, 'TH', 'fluxLoad') > 1) fixes.push((d) => wider(d) ?? thinner(d));
+    if (res(s, 'TH', 'riseRate') > res(s, 'TH', 'feedwellSettling')) fixes.push(wider);
+    if (res(s, 'TH', 'bedHeight') > res(s, 'TH', 'bedAvailable')) fixes.push((d) => up(d, 'thDepth', 12, 0.5) ?? wider(d) ?? thinner(d));
+    if (res(s, 'TH', 'rakeLoad') > 1) fixes.push((d) => up(d, 'rakeDrive', RAKE_DRIVES.length - 1) ?? wider(d));
+    const plate = pick(PRESS_PLATES, d.pressPlate);
+    if (Math.round(d.pressChambers) > plate.maxChambers) fixes.push((d) => up(d, 'pressPlate', PRESS_PLATES.length - 1) ?? { ...d, pressChambers: plate.maxChambers });
+    if (res(s, 'FL', 'load') > 1) {
+      fixes.push((d) => (d.pressChambers + 5 <= plate.maxChambers ? up(d, 'pressChambers', 200, 5) : null) ?? up(d, 'presses', 8) ?? up(d, 'pressPlate', PRESS_PLATES.length - 1));
+    }
+    const b = c.backfill;
+    const slump = res(s, 'L1', 'slump');
+    const paste = s.streams[S.paste];
+    if (paste && Math.abs(paste.cw - d.pasteCw) >= 0.003) fixes.push((d) => down(d, 'pasteCw', 0.68, 0.005));
+    if (slump < b.slump[0]) fixes.push((d) => down(d, 'pasteCw', 0.68, 0.0025));
+    if (slump > b.slump[1]) fixes.push((d) => up(d, 'pasteCw', 0.84, 0.0025));
+    if (res(s, 'BN', 'strength') < b.ucs) fixes.push((d) => up(d, 'binder', 0.12, 0.0025));
+    const duty = pumpDuty(c, d, s);
+    const pump = pick(PASTE_PUMPS, d.pumpModel);
+    // the pumps first: they do not change the line
+    if (duty.perPump > pump.flow) fixes.push((d) => up(d, 'pumps', 4) ?? up(d, 'pumpModel', PASTE_PUMPS.length - 1));
+    if (duty.pressure > pump.pressure) fixes.push((d) => up(d, 'pumpModel', PASTE_PUMPS.length - 1) ?? (res(s, 'L2', 'pressure') > 0 ? up(d, 'pipeModel', PIPES.length - 1) : null));
+    // a slack line wants more friction: a narrower line, or a stiffer paste while the slump allows
+    if (res(s, 'L2', 'pressure') < 0) fixes.push((d) => down(d, 'pipeModel', 0) ?? (slump - 0.005 > b.slump[0] ? up(d, 'pasteCw', 0.84, 0.0025) : null));
+    if (!(res(s, 'L1', 'reynolds') < res(s, 'L1', 'criticalReynolds'))) fixes.push((d) => (res(s, 'L2', 'pressure') > 0 ? up(d, 'pipeModel', PIPES.length - 1) : null) ?? (slump - 0.005 > b.slump[0] ? up(d, 'pasteCw', 0.84, 0.0025) : null));
+  }
   for (const f of fixes) {
     const next = f(d);
     if (next) return next;
@@ -123,19 +159,22 @@ let closed = 0;
 const capex: number[] = [];
 const moves: number[] = [];
 const t0 = performance.now();
-for (let seed = 1; seed <= n; seed++) {
+// DUMP=<seed> closes that one contract and prints the design
+const seeds = process.env.DUMP ? [Number(process.env.DUMP)] : Array.from({ length: n }, (_, i) => i + 1);
+for (const seed of seeds) {
   const c = contractFor(seed);
-  let d = starterDesign();
+  let d = starterDesign(c);
   let s = summarise(c, d);
   let steps = 0;
   const passes = () => STATIONS.every((st) => stationPasses(st, c, d, s) === true);
-  while (!passes() && steps < 250) {
+  while (!passes() && steps < 600) {
     const next = nextMove(c, d, s);
     if (!next) break;
     d = next;
     s = summarise(c, d);
     steps++;
   }
+  if (process.env.DUMP) console.log('DESIGN ' + JSON.stringify(d));
   if (passes()) {
     closed++;
     capex.push(costsFor(c, d, s).capex / 1e6);
@@ -145,14 +184,14 @@ for (let seed = 1; seed <= n; seed++) {
       const bad = st.checks(c, d, s).filter((k) => k.ok !== true).map((k) => `${k.label} ${k.value} (${k.limit})`);
       return `${st.short}: ${bad.join('; ')}`;
     });
-    console.log(`  contract ${seed}: ${c.tph} t/h, Wi ${c.wi}, P80 ${(c.p80 * 1e6).toFixed(0)} µm, stuck after ${steps} moves -> ${failing.join(' | ')}`);
+    console.log(`  contract ${seed}: ${c.tph} t/h, Wi ${c.wi}, P80 ${(c.p80 * 1e6).toFixed(0)} µm, drop ${c.backfill.drop} m, level ${c.backfill.level} m, stuck after ${steps} moves -> ${failing.join(' | ')}`);
     if (process.env.DEBUG) console.log('   ', JSON.stringify(d), 'converged', s.converged, 'kPa', (res(s, 'CYC', 'pressure') / 1000).toFixed(0), 'of t/h', s.streams[S.cycOver].tph.toFixed(0), 'uf t/h', s.streams[S.cycUnder].tph.toFixed(0), 'P80 um', (s.streams[S.cycOver].p80 * 1e6).toFixed(0), 'mill kW', (res(s, 'BM', 'powerDraw') / 1000).toFixed(0), s.diagnostics.filter((x) => x.nodeId === 'CYC' || !x.nodeId).map((x) => x.message).join(' / '));
   }
 }
 const q = (xs: number[], f: number) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length * f)];
 check(
-  `${closed} of ${n} contracts closed by the plain designer`,
-  closed === n,
+  `${closed} of ${seeds.length} contracts closed by the plain designer`,
+  closed === seeds.length,
   `${((performance.now() - t0) / 1000).toFixed(1)} s; capital P10 $${q(capex, 0.1)?.toFixed(1)}M, P90 $${q(capex, 0.9)?.toFixed(1)}M; moves median ${q(moves, 0.5)}`,
 );
 

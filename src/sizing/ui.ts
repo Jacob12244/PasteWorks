@@ -1,6 +1,6 @@
 import './sizing.css';
 import type { Contract, Design } from './circuit';
-import { fmt, STATIONS, type Check, type Row, type Station } from './stations';
+import { fmt, settled, STATIONS, type Check, type Plot, type Row, type Station } from './stations';
 import type { Summary } from './summary';
 import type { Costs } from './costs';
 import type { Score } from './scores';
@@ -45,7 +45,9 @@ export class SizingUI {
   private notesBox = el('div', 'sz-notes');
   private costBox = el('table', 'sz-rows');
   private chart = el('canvas', 'sz-chart');
+  private chartTitle = el('div', 'sz-sect', 'Size distribution');
   private legend = el('div', 'sz-legend');
+  private contract: Contract | null = null;
   private nav = el('div', 'sz-nav');
   private modal = el('div', 'sz-modal');
   private current = -1;
@@ -75,13 +77,17 @@ export class SizingUI {
   }
 
   setContract(c: Contract) {
+    this.contract = c;
     this.contractTitle.textContent = `Contract ${String(c.seed).padStart(5, '0')}`;
+    const b = c.backfill;
     const rows: Array<[string, string]> = [
       ['Throughput', `${c.tph} t/h dry ore`],
       ['Blast', `top size ${fmt.size(c.rom.xmax)}, x50 ${fmt.size(c.rom.x50)}`],
       ['Ore', `Wi ${c.wi.toFixed(1)} kWh/t, Ai ${c.ai.toFixed(2)}, SG ${(c.density / 1000).toFixed(2)}`],
       ['Grind', `P80 ≤ ${fmt.size(c.p80)}`],
-      ['Flotation feed', `${fmt.pct(c.overflowCw[0])} – ${fmt.pct(c.overflowCw[1])} solids`],
+      ['Flotation feed', `${fmt.pct(c.overflowCw[0])} – ${fmt.pct(c.overflowCw[1])} solids, ${fmt.pct(b.pull, 1)} to concentrate`],
+      ['Fill', `≥ ${fmt.kPa(b.ucs)} at 28 days, ${(b.slump[0] * 1000).toFixed(0)} – ${(b.slump[1] * 1000).toFixed(0)} mm slump`],
+      ['Stopes', `${b.drop} m down, ${(b.surface + b.level).toLocaleString('en')} m along`],
     ];
     this.contractBody.innerHTML = '';
     const t = el('table', 'sz-rows');
@@ -102,11 +108,6 @@ export class SizingUI {
       b.onclick = () => this.h.station(i);
       this.steps.append(b);
     });
-    const next = el('button', 'sz-step locked');
-    next.disabled = true;
-    next.title = 'The backfill plant joins the line in the next phase';
-    next.append(el('i'), el('span', undefined, `${STATIONS.length + 1}  Backfill`));
-    this.steps.append(next);
   }
 
   /** Open a station: its sliders, from the design as it stands. */
@@ -123,21 +124,23 @@ export class SizingUI {
     const body = el('div', 'sz-body');
     body.append(el('p', 'sz-blurb', st.blurb));
 
+    const c = this.contract!;
     for (const s of st.sliders) {
       const box = el('div', 'sz-ctl');
       const lab = el('div', 'sz-lab');
       const value = el('b');
       lab.append(el('span', undefined, s.label), value);
       const input = el('input');
+      const range = s.limits ? s.limits(c) : { min: s.min, max: s.max, step: s.step };
       input.type = 'range';
-      input.min = String(s.min);
-      input.max = String(s.max);
-      input.step = String(s.step);
+      input.min = String(range.min);
+      input.max = String(range.max);
+      input.step = String(range.step);
       input.value = String(design[s.key]);
       const paint = () => {
         const v = Number(input.value);
-        value.textContent = s.show(v);
-        input.style.setProperty('--pct', `${((v - s.min) / (s.max - s.min)) * 100}%`);
+        value.textContent = s.show(v, c);
+        input.style.setProperty('--pct', `${((v - range.min) / (range.max - range.min)) * 100}%`);
       };
       input.oninput = () => {
         paint();
@@ -151,7 +154,8 @@ export class SizingUI {
     }
 
     body.append(el('div', 'sz-sect', 'Checks'), this.checksBox, this.notesBox);
-    body.append(el('div', 'sz-sect', 'Size distribution'), this.chart, this.legend);
+    this.chartTitle.textContent = st.plot ? '' : 'Size distribution';
+    body.append(this.chartTitle, this.chart, this.legend);
     body.append(el('div', 'sz-sect', 'Numbers'), this.rowsBox);
     body.append(el('div', 'sz-sect', 'Cost of this station'), this.costBox);
     p.append(body);
@@ -180,7 +184,9 @@ export class SizingUI {
     if (!st) return;
 
     this.checksBox.innerHTML = '';
-    for (const k of st.checks(c, d, s)) this.checksBox.append(checkRow(k));
+    // numbers from a circuit that has not settled are not a pass or a fail
+    const judged = settled(st, s);
+    for (const k of st.checks(c, d, s)) this.checksBox.append(checkRow(judged ? k : { ...k, ok: null }));
 
     this.notesBox.innerHTML = '';
     for (const x of s.diagnostics) {
@@ -190,9 +196,12 @@ export class SizingUI {
     }
     if (!s.converged) {
       const grinding = st.id === 'mill' || st.id === 'cyclones';
+      const after = STATIONS.findIndex((x) => x.id === 'cyclones') < this.current;
       this.notesBox.append(el('div', 'sz-note error', grinding
         ? 'The grinding circuit has no steady state: the mill cannot break what the cyclones send back, so the circulating load grows without end and every number here is where the solve gave up. A bigger mill, or a coarser cut.'
-        : 'The circuit did not settle at these settings, so these numbers are where the solve gave up.'));
+        : after
+          ? 'The grinding circuit has not settled, so nothing after it has either: these numbers are where the solve gave up. Size the mill and cyclones first.'
+          : 'The circuit did not settle at these settings, so these numbers are where the solve gave up.'));
     }
 
     this.rowsBox.innerHTML = '';
@@ -206,7 +215,11 @@ export class SizingUI {
       row({ label: 'Running cost', value: `$${sc.opexPerT.toFixed(2)}/t` }),
     );
 
-    drawChart(this.chart, s, st, c, this.legend);
+    const plot = st.plot?.(c, d, s) ?? null;
+    if (st.plot) {
+      this.chartTitle.textContent = plot?.title ?? '';
+      drawPlot(this.chart, plot, this.legend);
+    } else drawChart(this.chart, s, st, c, this.legend);
 
     const go = this.nav.querySelector<HTMLButtonElement>('[data-commission]');
     if (go) go.disabled = !allPass;
@@ -215,8 +228,8 @@ export class SizingUI {
     const tt = el('div', 'sz-body');
     tt.append(
       stat('Capital', money(costs.capex)),
-      stat('Operating', `$${costs.opexPerT.toFixed(2)}/t`),
-      stat('Power', `${(costs.kW / 1000).toFixed(1)} MW`),
+      stat('Operating', s.converged ? `${costs.opexPerT.toFixed(2)}/t` : '—'),
+      stat('Power', s.converged ? `${(costs.kW / 1000).toFixed(1)} MW` : '—'),
     );
     this.totals.append(tt);
   }
@@ -224,10 +237,11 @@ export class SizingUI {
   /** The value a slider shows after the game moved it (a model change clamping a setting). */
   setSlider(key: keyof Design, v: number) {
     const s = this.sliders.get(key);
-    if (!s) return;
+    if (!s || !this.contract) return;
+    const range = s.slider.limits ? s.slider.limits(this.contract) : s.slider;
     s.input.value = String(v);
-    s.value.textContent = s.slider.show(v);
-    s.input.style.setProperty('--pct', `${((v - s.slider.min) / (s.slider.max - s.slider.min)) * 100}%`);
+    s.value.textContent = s.slider.show(v, this.contract);
+    s.input.style.setProperty('--pct', `${((v - range.min) / (range.max - range.min)) * 100}%`);
   }
 
   showResults(c: Contract, costs: Costs, score: Score, best: Score[], isBest: boolean) {
@@ -280,6 +294,84 @@ function checkRow(k: Check): HTMLElement {
   const d = el('div', 'sz-check ' + (k.ok === null ? 'pending' : k.ok ? 'pass' : 'fail'));
   d.append(el('i'), el('span', undefined, k.label), el('b', undefined, k.value), el('em', undefined, k.limit));
   return d;
+}
+
+/** Tick values across a range: 1, 2 or 5 times a power of ten. */
+function ticks(lo: number, hi: number, n = 5): number[] {
+  const span = hi - lo;
+  if (!(span > 0)) return [lo];
+  const raw = span / n;
+  const p = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((k) => k * p).find((v) => v >= raw) ?? raw;
+  const out: number[] = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9 * span; v += step) out.push(v);
+  return out;
+}
+
+/** A station's own chart: lines on linear axes, reference lines across it and a dot where the plant sits. */
+function drawPlot(cv: HTMLCanvasElement, p: Plot | null, legend: HTMLElement) {
+  const g = cv.getContext('2d')!;
+  const W = cv.width, H = cv.height;
+  const pad = { l: 72, r: 14, t: 14, b: 44 };
+  g.clearRect(0, 0, W, H);
+  legend.innerHTML = '';
+  if (!p) return;
+  const xs = p.lines.flatMap((l) => l.points.map((q) => q[0])).filter(Number.isFinite);
+  const ys = [
+    ...p.lines.flatMap((l) => l.points.map((q) => q[1])),
+    ...(p.marks ?? []).map((m) => m.y),
+    ...(p.dot ? [p.dot.y] : []),
+  ].filter(Number.isFinite);
+  if (!xs.length || !ys.length) return;
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(0, ...ys), y1 = Math.max(...ys) * 1.08 || 1;
+  const x = (v: number) => pad.l + ((v - x0) / (x1 - x0 || 1)) * (W - pad.l - pad.r);
+  const y = (v: number) => pad.t + (1 - (v - y0) / (y1 - y0 || 1)) * (H - pad.t - pad.b);
+
+  g.font = '20px ui-monospace, Consolas, monospace';
+  g.fillStyle = '#6d7c90';
+  g.strokeStyle = 'rgba(139,155,176,0.16)';
+  g.lineWidth = 1;
+  for (const v of ticks(y0, y1)) {
+    g.beginPath(); g.moveTo(pad.l, y(v)); g.lineTo(W - pad.r, y(v)); g.stroke();
+    g.fillText(p.y.fmt(v), 8, y(v) + 7);
+  }
+  for (const v of ticks(x0, x1)) {
+    g.beginPath(); g.moveTo(x(v), pad.t); g.lineTo(x(v), H - pad.b); g.stroke();
+    const t = p.x.fmt(v);
+    g.fillText(t, x(v) - t.length * 5.5, H - 14);
+  }
+  for (const m of p.marks ?? []) {
+    g.strokeStyle = m.colour;
+    g.lineWidth = 2;
+    g.setLineDash([8, 6]);
+    g.beginPath(); g.moveTo(pad.l, y(m.y)); g.lineTo(W - pad.r, y(m.y)); g.stroke();
+  }
+  for (const l of p.lines) {
+    g.strokeStyle = l.colour;
+    g.lineWidth = 4;
+    g.setLineDash(l.dashed ? [10, 8] : []);
+    g.beginPath();
+    l.points.forEach(([px, py], i) => (i ? g.lineTo(x(px), y(py)) : g.moveTo(x(px), y(py))));
+    g.stroke();
+  }
+  g.setLineDash([]);
+  if (p.dot) {
+    g.fillStyle = p.dot.colour;
+    g.beginPath(); g.arc(x(p.dot.x), y(p.dot.y), 9, 0, Math.PI * 2); g.fill();
+  }
+  const item = (colour: string, text: string) => {
+    const s = el('span');
+    const sw = el('i');
+    sw.style.background = colour;
+    s.append(sw, document.createTextNode(text));
+    legend.append(s);
+  };
+  for (const l of p.lines) item(l.colour, l.label);
+  for (const m of p.marks ?? []) item(m.colour, m.label);
+  if (p.dot) item(p.dot.colour, p.dot.label);
+  const axes = el('span', 'sz-axes', `${p.x.label} → · ↑ ${p.y.label}`);
+  legend.append(axes);
 }
 
 /** Cumulative passing against size, log scale, for the station's streams. */

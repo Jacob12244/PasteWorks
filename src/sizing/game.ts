@@ -7,12 +7,13 @@ import { STATIONS, fmt, stationPasses } from './stations';
 import { contractFor, randomSeed, starterDesign } from './contract';
 import { costsFor } from './costs';
 import { record, scoreOf } from './scores';
-import { CONES, JAWS, SCREENS, cavity } from './equipment';
-import { cycloneDiameter, screenAperture, S, type Contract, type Design } from './circuit';
+import { CONES, JAWS, PASTE_PUMPS, PIPES, PRESS_PLATES, RAKE_DRIVES, SCREENS, cavity } from './equipment';
+import { cycloneDiameter, screenAperture, underflowCw, S, type Contract, type Design } from './circuit';
+import { pumpDuty } from './backfill';
 import type { Summary } from './summary';
 
 /**
- * Equipment sizing: a contract, five stations, and the sliders. Every slider
+ * Equipment sizing: a contract, nine stations from the tip to the stope, and the sliders. Every slider
  * move rebuilds the machine it belongs to at once and sends the whole circuit
  * to ProcessPro's engine in a worker; the checks, curves and costs come back
  * from that solve.
@@ -37,7 +38,7 @@ export function startSizing(seedParam: string | null) {
 
   let seed = Number(seedParam) > 0 ? Math.floor(Number(seedParam)) : randomSeed();
   let contract: Contract = contractFor(seed);
-  let design: Design = starterDesign();
+  let design: Design = starterDesign(contract);
   let summary: Summary | null = null;
   let current = 0;
   const visited = new Set<number>([0]);
@@ -85,6 +86,13 @@ export function startSizing(seedParam: string | null) {
     const draw = summary?.results.BM?.powerDraw ?? summary?.results.BM?.power ?? 3e6;
     site.mill.set({ diameter: design.millD, length: design.millL, filling: design.millJ, power: draw / 1000 });
     site.cyclones.set({ diameter: cycloneDiameter(design), count: design.cyclones });
+    // the bed as the underflow needs it, filling the tank when it would need more
+    const bed = summary?.results.TH?.bedHeight ?? 0;
+    site.thickener.set({ diameter: design.thDiam, depth: design.thDepth, bed: Math.min(design.thDepth, Number.isFinite(bed) ? bed : design.thDepth), drive: design.rakeDrive });
+    site.presses.set({ plate: pick(PRESS_PLATES, design.pressPlate).size, chambers: design.pressChambers, presses: design.presses, depth: design.chamberDepth });
+    const paste = summary?.streams[S.paste];
+    site.pastePlant.set({ binder: (paste?.tph ?? contract.tph) * design.binder, flow: paste?.m3h ?? 150 });
+    site.pumps.set({ pumps: design.pumps, kW: pick(PASTE_PUMPS, design.pumpModel).kW, bore: pick(PIPES, design.pipeModel).id });
   };
 
   // --------------------------------------------------------------- the UI
@@ -117,7 +125,7 @@ export function startSizing(seedParam: string | null) {
     newContract() {
       seed = randomSeed();
       contract = contractFor(seed);
-      design = starterDesign();
+      design = starterDesign(contract);
       summary = null;
       visited.clear();
       setUrl();
@@ -171,6 +179,10 @@ export function startSizing(seedParam: string | null) {
       tertiary: [fmt.size(st[S.fineOre]?.p80), 'fine ore P80'],
       mill: [fmt.kW(s.results.BM?.powerDraw ?? s.results.BM?.power ?? NaN), 'mill power'],
       cyclones: [fmt.size(st[S.cycOver]?.p80), `grind P80, target ${fmt.size(contract.p80)}`],
+      thickener: [fmt.pct(underflowCw(contract, design.ufPump), 1), `underflow, ${pick(RAKE_DRIVES, design.rakeDrive).name.toLowerCase()} rakes`],
+      filter: [fmt.pct(s.results.FL?.load ?? NaN), 'of press capacity'],
+      paste: [fmt.kPa(s.results.BN?.strength ?? NaN), `fill strength, target ${fmt.kPa(contract.backfill.ucs)}`],
+      pumping: [fmt.kPa(pumpDuty(contract, design, s).pressure), 'pump pressure'],
     };
     STATIONS.forEach((station, i) => {
       const state = states[i];
@@ -202,8 +214,19 @@ export function startSizing(seedParam: string | null) {
   };
   requestAnimationFrame(frame);
 
+  // for tools/sizingpage.mjs: load a whole design, as the verify designer closed it
+  (window as unknown as { SZ: unknown }).SZ = {
+    design: () => design,
+    apply(next: Partial<Design>) {
+      design = { ...design, ...next };
+      syncMachines();
+      goTo(current);
+      solve();
+    },
+  };
+
   // a glance at the whole line with O
   addEventListener('keydown', (e) => {
-    if (e.key === 'o' || e.key === 'O') stage.flyTo(new THREE.Vector3(110, 0, 0), new THREE.Vector3(-60, 110, 160), 1200);
+    if (e.key === 'o' || e.key === 'O') stage.flyTo(new THREE.Vector3(265, 0, 25), new THREE.Vector3(-40, 250, 330), 1200);
   });
 }

@@ -1,5 +1,5 @@
 // Opens the sizing game in headless Chrome, visits each station and saves a
-// screenshot of each: node tools/sizingpage.mjs <url> <outdir>
+// screenshot of each: node tools/sizingpage.mjs <url> <outdir> [stations] [design json]
 import puppeteer from 'puppeteer-core';
 
 const url = process.argv[2] ?? 'http://localhost:5191/?size=4821';
@@ -17,6 +17,11 @@ page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') 
 page.on('pageerror', (e) => console.log('pageerror', e.message));
 await page.goto(url, { waitUntil: 'networkidle0' });
 await sleep(6000);
+// a fifth argument: a design as JSON (from DUMP=<seed> npm run verify:sizing), loaded before the shots
+if (process.argv[5]) {
+  await page.evaluate((d) => window.SZ.apply(JSON.parse(d)), process.argv[5]);
+  await sleep(3000);
+}
 const shots = process.argv[4] ? process.argv[4].split(',').map(Number) : [0, 1, 2, 3, 4];
 for (const i of shots) {
   await page.evaluate((i) => document.querySelectorAll('#sizing .sz-step')[i]?.click(), i);

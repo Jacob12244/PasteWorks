@@ -3,16 +3,21 @@ import { C, metal, matte, glowUnique } from '../view/palette';
 import { box, cyl, Tag } from '../view/parts';
 import { beltMaterial, setFlow, type FlowMaterial } from '../view/flow';
 import { BallMill, ConeCrusher, CycloneCluster, Grizzly, JawCrusher, ScreenBank, type Machine } from './models';
+import { FilterPresses, PastePlant, PastePumps, ThickenerTank } from './pastemodels';
 
 /**
- * The site: one long line from the tip to the cyclones, west to east, with the
- * conveyors that join the stations. The machines on it are the sizing game's;
- * everything else (stockpile, bin, belts) is fixed.
+ * The site: one long line from the tip to the borehole collar, west to east,
+ * with the conveyors and pipes that join the stations. The machines on it are
+ * the sizing game's; everything else (stockpile, bin, belts, the flotation
+ * cells) is fixed.
  */
+
+/** Where the paste plant stands along the line. */
+export const AT = { thickener: 300, filter: 352, paste: 386, pumping: 410 } as const;
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
-export type StationId = 'primary' | 'secondary' | 'tertiary' | 'mill' | 'cyclones';
+export type StationId = 'primary' | 'secondary' | 'tertiary' | 'mill' | 'cyclones' | 'thickener' | 'filter' | 'paste' | 'pumping';
 export type Status = 'idle' | 'fail' | 'pass';
 
 export interface StationView {
@@ -80,6 +85,10 @@ export class Site {
   screens = new ScreenBank();
   mill = new BallMill();
   cyclones = new CycloneCluster();
+  thickener = new ThickenerTank();
+  presses = new FilterPresses();
+  pastePlant = new PastePlant();
+  pumps = new PastePumps();
   stations: Record<StationId, StationView>;
   private belts: Conveyor[] = [];
   /** the next station's machines, shown before they are built as ghosts */
@@ -89,12 +98,12 @@ export class Site {
     const r = this.root;
 
     // ground and the pads the plant stands on
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(700, 260), matte(0x191d22, 1));
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(820, 260), matte(0x191d22, 1));
     ground.rotation.x = -Math.PI / 2;
-    ground.position.set(110, 0, 0);
+    ground.position.set(170, 0, 0);
     ground.receiveShadow = true;
     r.add(ground);
-    for (const [x, w, d] of [[0, 34, 30], [48, 40, 40], [86, 22, 22], [120, 34, 50], [156, 20, 20], [188, 34, 28], [214, 22, 22]] as const) {
+    for (const [x, w, d] of [[0, 34, 30], [48, 40, 40], [86, 22, 22], [120, 34, 50], [156, 20, 20], [188, 34, 28], [214, 22, 22], [250, 30, 18], [AT.thickener, 52, 52], [AT.filter, 30, 46], [AT.paste, 22, 26], [AT.pumping + 16, 44, 26]] as const) {
       const pad = box(w, 0.1, d, matte(C.concrete, 0.95));
       pad.position.set(x, 0.05, 0);
       r.add(pad);
@@ -171,10 +180,38 @@ export class Site {
       this.belts.push(c);
     }
 
-    // overflow launder east towards flotation, and the backfill plant beyond
-    const launder = box(26, 0.5, 0.8, metal(C.steelDark));
-    launder.position.set(236, 3, 0);
+    // overflow launder east to flotation: a bank of tank cells, concentrate off the side
+    const launder = box(18, 0.5, 0.8, metal(C.steelDark));
+    launder.position.set(232, 3, 0);
     r.add(launder);
+    for (let i = 0; i < 5; i++) {
+      const cell = cyl(2.4, 2.4, 4.2, metal(C.steelLight, 0.5, 0.8), 32);
+      cell.position.set(241 + i * 5.2, 2.1, 0);
+      r.add(cell);
+      const froth = new THREE.Mesh(new THREE.CircleGeometry(2.3, 32), matte(0xb9a97a, 0.6));
+      froth.rotation.x = -Math.PI / 2;
+      froth.position.set(241 + i * 5.2, 4.22, 0);
+      r.add(froth);
+      const motor = box(0.9, 1.2, 0.9, metal(C.panel, 0.5, 0.6));
+      motor.position.set(241 + i * 5.2, 4.9, 0);
+      r.add(motor);
+    }
+    const concLaunder = box(26, 0.4, 0.7, metal(C.steelDark));
+    concLaunder.position.set(251.4, 3.9, 2.9);
+    r.add(concLaunder);
+
+    // the paste plant
+    this.thickener.group.position.set(AT.thickener, 0, 0);
+    r.add(this.thickener.group);
+    this.presses.group.position.set(AT.filter, 0, 0);
+    r.add(this.presses.group);
+    this.pastePlant.group.position.set(AT.paste, 0, 0);
+    r.add(this.pastePlant.group);
+    this.pumps.group.position.set(AT.pumping, 0, 0);
+    r.add(this.pumps.group);
+    const cake = new Conveyor(V(AT.filter + 6, 0.8, 0), V(AT.paste - 1, 4.5, 0), 1.0);
+    r.add(cake.group);
+    this.belts.push(cake);
 
     const station = (target: THREE.Vector3, offset: THREE.Vector3, title: string, at: THREE.Vector3, radius: number, machines: Machine[]): StationView => {
       const ringMat = glowUnique(STATUS_COLOUR.idle, 1.4);
@@ -194,11 +231,18 @@ export class Site {
       tertiary: station(V(119, 6, 4), V(-6, 12, 27), 'Tertiary crushing and screening', V(120, 0, 4), 20, [this.screens, this.tertiary]),
       mill: station(V(188, 4.5, 0), V(-2, 7, 21), 'Ball mill', V(188, 0, 0), 13, [this.mill]),
       cyclones: station(V(214, 10, 0), V(-8, 5, 17), 'Cyclones', V(214, 0, 0), 9, [this.cyclones]),
+      thickener: station(V(AT.thickener, 5, 0), V(-12, 26, 46), 'Paste thickener', V(AT.thickener, 0, 0), 25, [this.thickener]),
+      filter: station(V(AT.filter, 6, 0), V(-10, 15, 30), 'Filter presses', V(AT.filter, 0, 0), 16, [this.presses]),
+      paste: station(V(AT.paste - 3, 7, -2), V(-16, 13, 34), 'Paste mixing', V(AT.paste - 3, 0, -2), 12, [this.pastePlant]),
+      pumping: station(V(AT.pumping + 16, 2, 4), V(-10, 18, 38), 'Paste pumps and line', V(AT.pumping + 16, 0, 4), 22, [this.pumps]),
     };
-    this.machines = [this.grizzly, this.jaw, this.secondary, this.tertiary, this.screens, this.mill, this.cyclones];
+    this.machines = [
+      this.grizzly, this.jaw, this.secondary, this.tertiary, this.screens, this.mill, this.cyclones,
+      this.thickener, this.presses, this.pastePlant, this.pumps,
+    ];
 
     // work lights over each station; the stage's own are placed for the backfill plant
-    for (const [x, z] of [[0, 8], [48, 10], [86, 6], [119, 10], [156, 6], [188, 8], [214, 6]] as const) {
+    for (const [x, z] of [[0, 8], [48, 10], [86, 6], [119, 10], [156, 6], [188, 8], [214, 6], [250, 6], [AT.thickener, 10], [AT.filter, 8], [AT.paste, 6], [AT.pumping + 14, 8]] as const) {
       const p = new THREE.PointLight(0xffd9a8, 260, 70, 2);
       p.position.set(x, 18, z);
       r.add(p);

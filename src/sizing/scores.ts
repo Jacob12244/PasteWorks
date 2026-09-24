@@ -14,7 +14,8 @@ export interface Score {
   total: number;
 }
 
-const KEY = 'pasteworks.sizing.scores';
+/** v2: the whole plant down to the stope. Scores from before it priced the crushing and grinding circuit alone. */
+const KEY = 'pasteworks.sizing.scores.v2';
 export const YEARS = 10;
 
 function load(): Record<string, Score[]> {

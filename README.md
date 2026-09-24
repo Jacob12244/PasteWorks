@@ -712,8 +712,12 @@ of them.
 screen, is the plant before there is a plant. A contract sets the job: a tonnage
 of run-of-mine ore, what the blast brought (top size and x50), how hard it is to
 grind (Bond Wi) and how hard on steel (Ai), the grind the flotation plant wants
-and the density it wants it at. You build the circuit that makes it, one station
-at a time, with sliders, and every number that comes back is ProcessPro's.
+and the density it wants it at, and what the mine wants in its stopes - a fill
+strength at 28 days, a slump, and how far down and along the stopes are. It
+comes with the tailings' test work: how they settle and compress, how fast they
+filter, how stiff and how strong their paste is. You build the plant that does
+it, from the tip to the borehole, one station at a time, with sliders, and every
+number that comes back is ProcessPro's.
 
 | Station | Sliders | Has to |
 | --- | --- | --- |
@@ -722,6 +726,10 @@ at a time, with sliders, and every number that comes back is ProcessPro's.
 | 3 Tertiary | screen aperture, size and number; tertiary cone size and setting | screens carry their undersize (Karra); the cone takes and keeps up with the circulating load |
 | 4 Mill | diameter, length, ball filling, mill solids | break what it is fed; stay between 1 and 2 diameters long |
 | 5 Cyclones | diameter, number, feed solids, underflow solids | make the grind; hit the flotation feed density; not rope |
+| 6 Thickener | diameter, sidewall depth, underflow pump, rake drive | pass the solids within the limiting flux; hold the bed the underflow needs; overflow clear; the rakes turn |
+| 7 Filter | plate size, chambers, presses, chamber depth | make the cake as fast as it comes; fit the press frame |
+| 8 Paste | paste solids, binder | slump in the mine's band; the fill's strength at 28 days |
+| 9 Pumping | line size, pump, pumps in parallel | make the pressure and the flow; run the line full down the borehole; stay laminar |
 
 It is ProcessPro's "Crushing and grinding circuit" example with the numbers
 pulled out: Whiten on the crushers, efficiency curves on the screens, Austin's
@@ -733,25 +741,57 @@ worker (about 30 ms), and the machine it belongs to is rebuilt at its new size a
 you drag. The mill's shell opens on its station to show the ball charge at J.
 Stations you have not reached yet stand as blueprints. A closed grinding circuit
 whose mill cannot break what comes back to it has no steady state, and the game
-says so rather than showing numbers the solve gave up on.
+says so rather than showing numbers the solve gave up on; the paste plant after
+it waits for it to settle.
+
+Past the cyclones it is ProcessPro's paste backfill plant, with the backfill
+ratings added to ProcessPro for this game (`thickening.ts`, `filtration.ts`,
+`paste.ts`), each checked against a published worked example:
+
+- **Thickener:** the steady-state theory of a thickener's bed (Buscall & White,
+  as Usher & Scales worked it for design; it reproduces Zhang et al. 2015 to the
+  figure): the solids flux the pulp can settle at on its way to the underflow
+  (Coe & Clevenger's limit), and the bed height the underflow's density needs
+  from the pulp's compressive yield stress. A wider tank needs a shorter bed; a
+  thicker underflow a taller one. The underflow pump sets the density, since at
+  steady state the solids leave as fast as they come. Rake torque is Metso's
+  against the drive's torque factor.
+- **Presses:** Ruth's constant-pressure cake filtration, both faces of each
+  chamber filling at once, plus a quarter of an hour a cycle for the squeeze,
+  blow, discharge and wash (ProcessPro's press example). A cake twice as thick
+  takes four times as long, so there is a best chamber depth, and a thicker
+  thickener underflow fills the chambers faster.
+- **Paste:** a Bingham plastic whose yield stress and viscosity climb
+  exponentially with solids; Boger's cylinder slump (Pashias et al. 1996);
+  strength by Abrams' water to cement law fitted to open paste fill data.
+- **Line:** Buckingham's laminar Bingham flow and Hanks' turbulence criterion.
+  Down the borehole the paste's weight works for the pumps, and if it outweighs
+  the friction the paste falls free and the line runs part-full, which is what
+  wears boreholes out: the line has to run full.
+
+The station charts redraw the same models across a range: the bed needed at
+every underflow density, the press's output at every chamber depth, the fill's
+strength at every binder dose, the pressure all the way along the line.
 
 When every station is green, **Commission** records the plant's capital and
 operating cost against the contract number, in this browser, ranked on ten years
 of owning it (capital plus ten years of operating cost). The same number is the
 same contract for everyone: `?size=4821`. Capital is the US Bureau of Mines'
-installed-cost curves (IC 9143 for the crushing and grinding circuits, IC 9170
-for screens), each machine priced on the tonnage it is rated for, so an oversized
-machine costs more; the split of a circuit's cost between its machines, the 2026
-escalation and the steel prices are this game's assumptions, and `costs.ts` says
-which is which. Running cost is power at the US industrial average and the steel
-the machines wear, by Bond's metal wear relations.
+installed-cost curves (IC 9143 for the crushing and grinding circuits,
+thickener and pressure filters, IC 9170 for screens), each machine priced on the
+tonnage it is rated for, so an oversized machine costs more; the split of a
+circuit's cost between its machines, the 2026 escalation, the steel prices, how
+a deeper thickener and a heavier rake drive add to its cost, and the paste pumps
+and line (there is no open cost curve for either) are this game's assumptions,
+and `costs.ts` says which is which. Running cost is power at the US industrial
+average, the steel the machines wear by Bond's metal wear relations, flocculant
+at the Bureau's price, and binder at the USGS cement price, which is most of it.
 
 The engine is ProcessPro's, installed from GitHub Packages as
 `@jacob12244/proc-engine`. To work on the engine and the game together, point
 `PROC_SRC` at a ProcessPro checkout and Vite reads the engine's source instead
 of the package (`PROC_SRC=../ProcessPro npm run dev`); the typecheck and
-`verify:sizing` still use the package. The backfill plant joins the end of the
-line in the next phase (the sixth, locked step).
+`verify:sizing` still use the package.
 
 ## Running it
 
@@ -771,7 +811,7 @@ npm run typecheck
 npm run verify     # the five physics harnesses, outside the browser
 npm run bake       # re-bake both arenas' collision worlds after changing anything in either
 npm run verify:arena
-npm run verify:sizing   # ProcessPro's crushing example rebuilt, then 50 contracts closed by a plain designer
+npm run verify:sizing   # ProcessPro's crushing example rebuilt, then 50 contracts closed, tip to stope, by a plain designer
 ```
 
 **Controls** — pick a world, watch or skip the opening, and it sits you in the

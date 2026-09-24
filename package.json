@@ -24,7 +24,7 @@
     "verify:arena": "esbuild tools/arenamap.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/arenamap.mjs --log-level=error && node node_modules/.cache/arenamap.mjs && npm run arena:build && node tools/arena.mjs"
   },
   "dependencies": {
-    "@jacob12244/proc-engine": "^0.1.0",
+    "@jacob12244/proc-engine": "^0.2.0",
     "three": "^0.169.0",
     "ws": "^8.21.3"
   },

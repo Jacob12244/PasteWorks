@@ -217,8 +217,8 @@ export class Welcome {
         <rect x="4" y="31" width="32" height="2.4" rx="1.2" fill="#35e0d0" opacity=".5"/>
       </svg>
       <span class="wa-name"><em>Before the plant</em><b>SIZE THE PLANT</b></span>
-      <span class="wa-text">A contract, an ore and a grind to hit. Size every crusher, screen, mill and
-        cyclone with sliders, on ProcessPro's own models, as cheaply as you can.</span>
+      <span class="wa-text">A contract, an ore, a grind and a fill to hit. Size every machine from the jaw
+        to the paste line with sliders, on ProcessPro's own models, as cheaply as you can.</span>
       <span class="wa-go">Take the job&nbsp;&nbsp;&#9656;</span>`;
     a.onclick = (e) => {
       e.preventDefault();

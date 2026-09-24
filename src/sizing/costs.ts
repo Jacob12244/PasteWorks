@@ -1,6 +1,7 @@
 import { krebsCapacity } from '@jacob12244/proc-engine';
-import { S, cycloneDiameter, type Contract, type Design } from './circuit';
-import { CONES, JAWS, SCREENS } from './equipment';
+import { PRESS_PRESSURE, S, cycloneDiameter, type Contract, type Design } from './circuit';
+import { CONES, JAWS, PASTE_PUMPS, PIPES, PRESS_PLATES, RAKE_DRIVES, SCREENS } from './equipment';
+import { pumpDuty } from './backfill';
 import type { Summary } from './summary';
 import type { StationId } from './site';
 
@@ -33,6 +34,30 @@ import type { StationId } from './site';
  * crusher liners (Ai + 0.22)/11, all lb/kWh. Bond's ball wear runs high
  * against modern media (a copper mill measured 1.1 kg/t where Bond gives
  * 1.2 and later ran under 0.3), so read the media line as a ceiling.
+ *
+ * The paste plant, on the same basis:
+ *   thickener         USBM IC 9143: Yc = 6,436·A^0.625 (A in m², January 1984
+ *                     dollars), for a conventional tank. Deeper tanks and
+ *                     heavier rake drives cost more of the equipment share
+ *                     (2,568.866 of 5,465.673): scaled here by the tank's
+ *                     steel area and the drive's torque factor, which is this
+ *                     game's assumption.
+ *   filter presses    USBM IC 9143: a pressure filter is 1.71 times a vacuum
+ *                     filter, Yc = 28,375·A^0.65 (A in m²). The press feed
+ *                     pumps' power is the pressure times the feed, at the
+ *                     pump efficiency below.
+ *   flocculant        at 20 g/t of tailings (plants report 12 to 25), at the
+ *                     Bureau's $2.76/kg (IC 9143, January 1984 dollars).
+ *   binder            the running cost that matters most: tonnes an hour at
+ *                     the USGS average cement price (Mineral Commodity
+ *                     Summaries 2026: $160/t for 2025). The mixer and binder
+ *                     silo are not priced: there is no open curve for them.
+ *   paste pumps       power is the pressure times the flow over the pump
+ *                     efficiency. Capital for piston pumps and steel line has
+ *                     no open cost curve; the figures below are this game's.
+ *                     They land where the Bureau's whole slurry pipeline
+ *                     curve does (IC 9143: 21,021.7·X^0.546 for pumps, tanks
+ *                     and pipe), about $5M for 300 t/h over 3.5 km.
  */
 
 export interface StationCost {
@@ -65,6 +90,17 @@ const LINER_PRICE = 3.0;
 const LB = 0.4536;
 /** Installed power of a vibrating screen's exciters, kW; an assumption. */
 const SCREEN_KW = 30;
+
+/** Binder price, $/t: USGS MCS 2026, cement, average mill unit value for 2025. */
+const BINDER_PRICE = 160;
+/** Flocculant, kg per tonne of tailings (assumed, within the 12 to 25 g/t plants report), and its price, $/kg, January 1984 (IC 9143). */
+const FLOC_DOSE = 0.02;
+const FLOC_PRICE_1984 = 2.76;
+/** Paste pumps installed, $ per kW of installed motor; steel paste line, $ per metre per mm of bore. Assumed. */
+const PASTE_PUMP_PER_KW = 3000;
+const LINE_PER_M_PER_MM = 2.5;
+/** Pump efficiency, motor included, for the press feed pumps. Assumed. */
+const FEED_PUMP_EFFICIENCY = 0.7;
 
 /** How each circuit's cost is shared between its machines: this game's assumption. */
 const CRUSHING_SHARE = { jaw: 0.35, secondary: 0.25, tertiary: 0.25 };
@@ -169,7 +205,47 @@ export function costsFor(c: Contract, d: Design, s: Summary): Costs {
     opexPerT: perT(pumpKW),
   };
 
-  const stations = { primary, secondary, tertiary, mill, cyclones };
+  // ---- paste thickener
+  const area = (Math.PI * d.thDiam * d.thDiam) / 4;
+  const equipmentShare = 2568.866 / 5465.673;
+  const steel = (d.thDiam / 4 + d.thDepth) / (d.thDiam / 4 + 3.5);
+  const drive = Math.pow(pick(RAKE_DRIVES, d.rakeDrive).k / 20, 0.25);
+  const tailsTph = s.streams[S.tails]?.tph ?? 0;
+  const thickener: StationCost = {
+    capex: 6436 * Math.pow(area, 0.625) * ESCALATE * (1 - equipmentShare + equipmentShare * steel * drive),
+    kW: 0,
+    // kg/h of flocculant at its price, over the plant's tonnes an hour
+    opexPerT: (tailsTph * FLOC_DOSE * FLOC_PRICE_1984 * ESCALATE) / tph,
+  };
+
+  // ---- filter presses: 1.71 times the Bureau's vacuum filter, by area; feed pumps at filtration pressure
+  const pressArea = pick(PRESS_PLATES, d.pressPlate).chamberArea * Math.round(d.pressChambers) * Math.round(d.presses);
+  const feedFlow = (s.streams[S.filterFeed]?.m3h ?? 0) / 3600;
+  const feedKW = (PRESS_PRESSURE * feedFlow) / FEED_PUMP_EFFICIENCY / 1000;
+  const filter: StationCost = {
+    capex: 1.71 * 28375 * Math.pow(pressArea, 0.65) * ESCALATE,
+    kW: feedKW,
+    opexPerT: perT(feedKW),
+  };
+
+  // ---- paste: the binder
+  const pasteSolids = s.streams[S.paste]?.tph ?? 0;
+  const binderTph = pasteSolids * d.binder;
+  const paste: StationCost = { capex: 0, kW: 0, opexPerT: (binderTph * BINDER_PRICE) / tph };
+
+  // ---- paste pumps and line
+  const pump = pick(PASTE_PUMPS, d.pumpModel);
+  const pipe = pick(PIPES, d.pipeModel);
+  const duty = pumpDuty(c, d, s);
+  const pasteKW = Number.isFinite(duty.power) ? Math.max(0, duty.power) / 1000 : 0;
+  const lineLength = c.backfill.surface + c.backfill.drop + c.backfill.level;
+  const pumping: StationCost = {
+    capex: Math.round(d.pumps) * pump.kW * PASTE_PUMP_PER_KW + lineLength * pipe.nb * LINE_PER_M_PER_MM,
+    kW: pasteKW,
+    opexPerT: perT(pasteKW),
+  };
+
+  const stations = { primary, secondary, tertiary, mill, cyclones, thickener, filter, paste, pumping };
   const all = Object.values(stations);
   const capex = all.reduce((a, b) => a + b.capex, 0);
   const kW = all.reduce((a, b) => a + b.kW, 0);

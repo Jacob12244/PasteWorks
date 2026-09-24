@@ -96,3 +96,77 @@ export const jawLabel = (j: JawSize) => `${Math.round(j.width * 1000)} x ${Math.
 export const coneLabel = (c: ConeSize) => `${Math.round(c.head * 1000)} mm head, ${c.kW} kW`;
 export const screenLabel = (s: ScreenSize) => `${s.width.toFixed(1)} x ${s.length.toFixed(1)} m`;
 export const cycloneLabel = (d: number) => `${Math.round(d * 1000)} mm`;
+
+// ------------------------------------------------------------ backfill half
+
+/**
+ * Rake drive classes, by the torque factor K the drive is rated at (T = K·D²,
+ * ft·lb and ft): the MIP Process Technologies thickener note's duty bands,
+ * each taken at the top of its band. Extra heavy has no top; 50 is this
+ * game's.
+ */
+export interface RakeDrive {
+  name: string;
+  k: number;
+}
+export const RAKE_DRIVES: RakeDrive[] = [
+  { name: 'Light', k: 10 },
+  { name: 'Medium', k: 20 },
+  { name: 'Heavy', k: 35 },
+  { name: 'Extra heavy', k: 50 },
+];
+
+/**
+ * Recessed-plate filter press plates: plate size, filtration area per
+ * chamber (both faces) and the most chambers one press frame takes. The
+ * 1.0 to 1.5 m plates are a press maker's published range (its area and plate
+ * count at each size); 2.0 m is a maker's sizing chart; 2.5 m is the mining
+ * presses reported at Paste 2018 and 2025 (9.2 to 9.6 m² a chamber, 184 to 208
+ * plates a press).
+ */
+export interface PressPlate {
+  size: number;
+  chamberArea: number;
+  maxChambers: number;
+}
+export const PRESS_PLATES: PressPlate[] = [
+  { size: 1.0, chamberArea: 1.8, maxChambers: 69 },
+  { size: 1.25, chamberArea: 2.8, maxChambers: 91 },
+  { size: 1.5, chamberArea: 4.1, maxChambers: 123 },
+  { size: 2.0, chamberArea: 6.8, maxChambers: 130 },
+  { size: 2.5, chamberArea: 9.4, maxChambers: 200 },
+];
+
+/** Paste line: steel pipe by nominal bore, and its inside diameter, metres. */
+export interface PipeSize {
+  nb: number;
+  id: number;
+}
+export const PIPES: PipeSize[] = [
+  { nb: 100, id: 0.097 },
+  { nb: 125, id: 0.122 },
+  { nb: 150, id: 0.146 },
+  { nb: 175, id: 0.17 },
+  { nb: 200, id: 0.194 },
+  { nb: 250, id: 0.243 },
+];
+
+/**
+ * Positive-displacement piston paste pumps: most flow and most pressure as a
+ * maker's published range lists them (the two are not reached together).
+ * Makers quote power packs, not a power per model, so the installed power
+ * here is 1.2 times the hydraulic power at the rating; installations run from
+ * 1.0 to 1.9 times. That factor is this game's.
+ */
+export interface PastePump {
+  flow: number;
+  pressure: number;
+  kW: number;
+}
+const pump = (m3h: number, bar: number): PastePump => ({ flow: m3h / 3600, pressure: bar * 1e5, kW: Math.round(((m3h * bar) / 36) * 1.2) });
+export const PASTE_PUMPS: PastePump[] = [pump(55, 70), pump(95, 150), pump(160, 150), pump(250, 150), pump(400, 100)];
+
+export const rakeLabel = (r: RakeDrive) => `${r.name}, K ${r.k}`;
+export const plateLabel = (p: PressPlate) => `${(p.size * 1000).toFixed(0)} mm plates, ${p.chamberArea} m²/chamber`;
+export const pipeLabel = (p: PipeSize) => `NB ${p.nb}, ${(p.id * 1000).toFixed(0)} mm bore`;
+export const pumpLabel = (p: PastePump) => `${Math.round(p.flow * 3600)} m³/h, ${Math.round(p.pressure / 1e5)} bar, ${p.kW} kW`;

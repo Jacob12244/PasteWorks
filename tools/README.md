@@ -9,7 +9,7 @@ checked outside the browser.
 | `scenarios.ts` | Does each setpoint actually trade off against the others? Runs 12 h at a range of deliberately good and bad settings. |
 | `solve.ts` | Is the objective winnable, and is there a single best answer? Grid-searches binder dose, slump target and stroke rate for on-spec, blockage-free, cheapest fills. |
 | `hardmode.ts` | Does the upstream circuit trade the way it should? Sweeps grind, flotation, deslime cut and ball-charge condition, then runs nine full fills — including two that never order grinding media. |
-| `sizing.ts` | Does the sizing game run ProcessPro's models right, and can every contract be won? Rebuilds ProcessPro's crushing example to within 1%, then has a plain designer close 50 random contracts. Not part of `verify`: it takes about a minute. |
+| `sizing.ts` | Does the sizing game run ProcessPro's models right, and can every contract be won? Rebuilds ProcessPro's crushing example to within 1%, then has a plain designer close 50 random contracts from the tip to the stope. `DUMP=<seed>` closes one contract and prints the design. Not part of `verify`: it takes about two minutes. |
 | `worlds.ts` | Can every world be won? Runs each scenario to the end at its defaults and at a reference recipe, operating the plant the way a sensible operator would. `solve:worlds [id]` does the full binder × slump × stroke sweep instead. |
 
 `check`, `scenarios` and `solve` run Today's plant on a fixed tailings stream
@@ -39,7 +39,8 @@ node tools/walk.mjs today psyche
 ```
 
 - `sizingpage.mjs` — a screenshot of each sizing station and its checks:
-  `node tools/sizingpage.mjs "http://localhost:5180/?size=4821" out`.
+  `node tools/sizingpage.mjs "http://localhost:5180/?size=4821" out [stations] [design]`,
+  the design as `DUMP=4821 npm run verify:sizing` prints it, to see a finished plant.
 - `shot.mjs` — one screenshot, after running a script.
 - `shots.mjs` — several camera positions from one browser session; each shot
   leaves the desk first unless it says `"seated": true`.
