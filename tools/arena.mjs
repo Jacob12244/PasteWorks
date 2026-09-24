@@ -15,6 +15,16 @@
 //   junk      nonsense gets you shown the door
 //   flood     so does a firehose of messages
 //   per-ip    a second server with a low per-address cap refuses the extra socket
+// and in the mine, the barrow game:
+//   crews     two joiners go on opposite crews, and the round starts
+//   grab      E at your own fill point puts the barrow in your hands
+//   no throw  nothing leaves your hands while they are on the barrow
+//   pour      the barrow over the brow of their stope scores, and goes home to refill
+//   regrab    let go of it, pick it up again, and it still pours
+//   drop      put the pusher down and the barrow goes down where they fell
+//   tip       the other crew walking onto it sends it home
+//   friendly  paste goes straight through your own crew
+//   status    /play/status counts each room
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,8 +56,8 @@ function server(port, env = {}) {
 }
 
 class Bot {
-  constructor(port) {
-    this.ws = new WebSocket(`ws://127.0.0.1:${port}/play`);
+  constructor(port, map) {
+    this.ws = new WebSocket(`ws://127.0.0.1:${port}/play${map ? '?map=' + map : ''}`);
     this.msgs = [];
     this.id = 0;
     this.pos = [0, 0, 0];
@@ -71,7 +81,7 @@ class Bot {
   send(m) { if (this.ws.readyState === 1) this.ws.send(JSON.stringify(m)); }
   async hello() {
     await this.open;
-    this.send({ t: 'hi', v: 1 });
+    this.send({ t: 'hi', v: 2 });
     return this.wait((m) => m.t === 'hi' || m.t === 'full');
   }
   async wait(pred, ms = 3000, from = 0) {
@@ -197,6 +207,95 @@ try {
   for (let i = 0; i < 600; i++) f.send({ t: 's', p: [0, 0, 0], a: [0, 0], w: 0, f: 0, l: -1 });
   await sleep(500);
   check('flood shown the door', f.closed === 4003, `closed ${f.closed}`);
+
+  // ---- the mine: Day against Night, and the barrows
+  const m1 = new Bot(PORT, 'mine'), m2 = new Bot(PORT, 'mine');
+  const h1 = await m1.hello(), h2 = await m2.hello();
+  check('mine: crews', h1?.map === 'mine' && h2?.map === 'mine' && h1.tm + h2.tm === 1 && !!h1.bar,
+    h1 && h2 ? `${h1.name} on ${h1.tm ? 'night' : 'day'}, ${h2.name} on ${h2.tm ? 'night' : 'day'}` : 'no hello');
+  const [day, night] = h1.tm === 0 ? [m1, m2] : [m2, m1];
+  const mrd = await day.wait((m) => m.t === 'Rd' && m.r.st === 'play', 3000);
+  check('mine: round starts', !!mrd);
+  await sleep(150);
+
+  // Day takes its barrow at its fill point...
+  await day.walkTo(-73.5, 5.1);
+  const g0 = day.msgs.length;
+  day.send({ t: 'b' });
+  const grab = await day.wait((m) => m.t === 'B' && m.ev === 'grab' && m.b === 0, 1500, g0);
+  check('mine: grab', !!grab && grab.by === day.id && grab.st === 'held');
+  // ...and cannot throw while it is in their hands
+  const f0 = day.msgs.length;
+  day.fireAt([-60, 1.5, 5], 5001);
+  const thrown = await day.wait((m) => m.t === 'F' && m.o === day.id, 500, f0);
+  check('mine: no throwing with the barrow', !thrown);
+
+  // over the brow of Night's stope: the far end of the level, the long way in a straight line
+  await day.walkTo(58, 26);
+  const p0 = day.msgs.length;
+  await day.walkTo(60.2, 29.3);
+  const pour = await day.wait((m) => m.t === 'B' && m.ev === 'pour', 2000, p0);
+  check('mine: pour', !!pour && pour.b === 0 && pour.by === day.id && pour.ts[0] === 1 && pour.st === 'away',
+    pour ? `${pour.ts[0]} - ${pour.ts[1]}, barrow away until ${pour.until}` : 'no pour');
+
+  // once it is full again: let go of it on the way, pick it up again, and it still pours
+  const full = await day.wait((m) => m.t === 'B' && m.ev === 'full' && m.b === 0, 9000, p0);
+  await day.walkTo(-73.5, 5.1);
+  day.send({ t: 'b' });
+  await day.walkTo(-62, 4.2);
+  const l0 = day.msgs.length;
+  day.send({ t: 'b' });
+  const let0 = await day.wait((m) => m.t === 'B' && m.ev === 'drop' && m.b === 0, 1500, l0);
+  await day.walkTo(-58, 5);
+  await day.walkTo(-62.3, 4.2);
+  const r0 = day.msgs.length;
+  day.send({ t: 'b' });
+  const regrab = await day.wait((m) => m.t === 'B' && m.ev === 'grab' && m.b === 0, 1500, r0);
+  await day.walkTo(58, 26);
+  const q0 = day.msgs.length;
+  await day.walkTo(60.2, 29.3);
+  const pour2 = await day.wait((m) => m.t === 'B' && m.ev === 'pour', 2000, q0);
+  check('mine: let go, pick up, pour', !!full && !!let0 && !!regrab && !!pour2 && pour2.ts[0] === 2,
+    `full ${!!full}, let go ${!!let0}, picked up ${!!regrab}, poured ${pour2 ? pour2.ts.join('-') : 'no'}`);
+
+  // Night takes theirs, and Day, standing in the fill cuddy with them, puts them down
+  await Promise.all([night.walkTo(73.8, -5.1), day.walkTo(58, 12), sleep(10)]);
+  await day.walkTo(67.5, -4.4);
+  const n0 = night.msgs.length;
+  night.send({ t: 'b' });
+  const ngrab = await night.wait((m) => m.t === 'B' && m.ev === 'grab' && m.b === 1, 1500, n0);
+  check('mine: night grabs', !!ngrab);
+  let down = null;
+  for (let s = 6000; s < 6030 && !down; s++) {
+    day.fireAt([night.pos[0], night.pos[1] + 1.1, night.pos[2]], s);
+    await sleep(190);
+    down = day.msgs.find((m) => m.t === 'B' && m.ev === 'drop' && m.b === 1);
+  }
+  check('mine: pusher down, barrow down', !!down && down.st === 'down' && Math.hypot(down.p[0] - night.pos[0], down.p[2] - night.pos[2]) < 0.5,
+    down ? `lying at ${down.p.join(', ')}` : 'never dropped');
+
+  // Day walks onto it: tipped out, back to Night's fill point
+  const t0 = day.msgs.length;
+  if (down) await day.walkTo(down.p[0] - 0.5, down.p[2]);
+  const tip = await day.wait((m) => m.t === 'B' && m.ev === 'tip' && m.b === 1, 1500, t0);
+  check('mine: tip', !!tip && tip.by === day.id && tip.st === 'home');
+
+  // a third on shift goes to the crew that is behind, and Night's own paste goes straight through them
+  const m3 = new Bot(PORT, 'mine');
+  const h3 = await m3.hello();
+  check('mine: joins the crew behind', h3?.tm === 1, `on ${h3?.tm ? 'night' : 'day'}`);
+  await sleep(4300);   // Night comes back from being put down
+  await Promise.all([night.walkTo(68, -4.6), m3.walkTo(74, -5.2), day.walkTo(58, 12)]);
+  await sleep(2100);
+  const f3 = m3.msgs.length;
+  m3.fireAt([night.pos[0], night.pos[1] + 1.1, night.pos[2]], 7001);
+  const land = await m3.wait((m) => m.t === "X" || m.t === "H", 2000, f3);
+  check('mine: no friendly fire', !!land && land.t === 'X', land ? (land.t === 'H' ? `hit ${land.v}` : 'went past, hit the rock') : 'nothing came back');
+
+  const st = await (await fetch(`http://127.0.0.1:${PORT}/play/status`)).json();
+  check('status per room', st.rooms?.mine?.online === 3 && st.rooms?.plant?.online === st.online, JSON.stringify(st.rooms));
+  [m1, m2, m3].forEach((b) => b.close());
+  await sleep(200);
 
   // ---- full, last: a slot is held a while after a socket goes, so
   // thirteen more on top of a and b makes fifteen, then one too many

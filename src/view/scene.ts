@@ -174,10 +174,31 @@ export class Stage {
     this.pools.forEach((p, i) => { p.intensity = base[i] * look.pools; });
 
     this.renderer.toneMappingExposure = look.exposure;
-    this.bloom.strength = look.bloom[0];
+    this.lookBloom = look.bloom;
     this.bloom.radius = look.bloom[1];
-    this.bloom.threshold = look.bloom[2];
+    this.footBloom();
     this.scene.environmentIntensity = look.env;
+  }
+
+  /**
+   * On foot the camera is a metre from things, not fifty. The orbit view's
+   * bloom catches anything bright, and that is fine when a white bag is a
+   * speck in the corner - but walk up to one and it fills the screen, and the
+   * whole view goes to haze. On foot, only what actually glows blooms: the
+   * threshold goes above anything a lit surface reaches, and it is gentler.
+   */
+  onFoot(on: boolean) {
+    this.walking = on;
+    this.footBloom();
+  }
+
+  private walking = false;
+  private lookBloom: [number, number, number] = [0.62, 0.55, 0.72];
+
+  private footBloom() {
+    const [strength, , threshold] = this.lookBloom;
+    this.bloom.strength = this.walking ? Math.min(strength, 0.45) : strength;
+    this.bloom.threshold = this.walking ? Math.max(threshold, 1.1) : threshold;
   }
 
   resize() {

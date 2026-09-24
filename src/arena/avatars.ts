@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { C, metal, matte } from '../view/palette';
-import { COLOURS, hex, INTERP_MS, type WeaponId } from './shared/rules';
+import { COLOURS, TEAMS, hex, INTERP_MS, type WeaponId } from './shared/rules';
 import { F } from './shared/protocol';
 
 /**
@@ -8,6 +8,11 @@ import { F } from './shared/protocol';
  * colour, carrying whatever they last had in hand. Drawn a little in the
  * past (INTERP_MS) from the server's snapshots, so there is always a pair of
  * them to blend between and nobody stutters.
+ *
+ * In the mine the vest is the crew's colour, there is a lamp on every hat,
+ * and someone pushing a barrow has both hands on its handles. Nothing down
+ * there is lit by the sun, so each avatar glows by however much of the
+ * level's baked light is falling where it stands.
  */
 
 interface Snap {
@@ -55,6 +60,15 @@ export class Avatar {
   private label: THREE.Sprite;
   private mats: THREE.MeshStandardMaterial[] = [];
   private tint: number[] = [];
+  private tints: THREE.Color[] = [];
+  private capLamp: THREE.Group | null = null;
+  /** pushing a barrow, as of the last snapshot drawn */
+  carrying = false;
+  /** facing, as drawn */
+  yaw = 0;
+  /** the light where they stand, from the level's probe; null above ground */
+  light: THREE.Color | null = null;
+  readonly team: number;
   private splats = new THREE.Group();
   private snaps: Snap[] = [];
   private stride = 0;
@@ -65,8 +79,9 @@ export class Avatar {
   alive = true;
   name: string;
 
-  constructor(readonly id: number, name: string, col: number) {
+  constructor(readonly id: number, name: string, col: number, team = -1) {
     this.name = name;
+    this.team = team;
     const g = this.group;
     g.userData.noCollide = true;
     g.add(this.body);
@@ -76,10 +91,12 @@ export class Avatar {
       const x = new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m });
       this.mats.push(x);
       this.tint.push(c);
+      this.tints.push(new THREE.Color(c));
       return x;
     };
-    const vest = mat(0xff7a1a, 0.7);
-    vest.emissive.setHex(0xff7a1a);
+    const vestCol = team >= 0 ? TEAMS[team].vest : 0xff7a1a;
+    const vest = mat(vestCol, 0.7);
+    vest.emissive.setHex(vestCol);
     vest.emissiveIntensity = 0.08;
     const navy = mat(0x243248, 0.85);
     const skin = mat(0xd8b596, 0.8);
@@ -143,10 +160,28 @@ export class Avatar {
     this.shield.scale.set(0.6, 1, 0.6);
     g.add(this.shield);
 
-    this.label = nameTag(name, hat);
+    this.label = nameTag(name, team >= 0 ? TEAMS[team].col : hat);
     this.label.position.y = 2.25;
     g.add(this.label);
     this.body.add(this.splats);
+  }
+
+  /** A lamp on the front of the hat, and the faint beam of it in the dust. */
+  lamp() {
+    if (this.capLamp) return;
+    const g = new THREE.Group();
+    const face = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.03, 10), new THREE.MeshBasicMaterial({ color: 0xfff6dc }));
+    face.rotation.x = Math.PI / 2;
+    const beam = new THREE.Mesh(
+      new THREE.ConeGeometry(0.9, 6, 16, 1, true).translate(0, -3, 0).rotateX(Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        color: 0xfff1d0, transparent: true, opacity: 0.035, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      }),
+    );
+    g.add(face, beam);
+    g.position.set(0, 0.3, -0.16);
+    this.head.add(g);
+    this.capLamp = g;
   }
 
   push(s: Snap) {
@@ -209,8 +244,15 @@ export class Avatar {
       const aim = 1.25 + s.pitch * 0.9;
       this.arms[0].rotation.x = aim * 0.8;
       this.arms[1].rotation.x = s.w === 0 ? aim : aim * 0.55 + Math.sin(this.stride) * 0.1;
-      this.gun.visible = s.w === 0;
-      this.rock.visible = s.w === 1;
+      this.carrying = !!(s.flags & F.carry);
+      this.yaw = s.yaw;
+      if (this.carrying) {
+        // both hands down and forward, on the handles
+        this.arms[0].rotation.x = 0.55;
+        this.arms[1].rotation.x = 0.55;
+      }
+      this.gun.visible = s.w === 0 && !this.carrying;
+      this.rock.visible = s.w === 1 && !this.carrying;
       this.gun.rotation.x = s.pitch;
       this.head.rotation.x = s.pitch * 0.6;
       this.shield.visible = !!(s.flags & F.shield) && this.alive;
@@ -224,9 +266,15 @@ export class Avatar {
     this.body.rotation.x = k * 1.45;
     this.body.position.y = k * 0.12;
     this.flash = Math.max(0, this.flash - dt);
+    const L = this.light;
     this.mats.forEach((m, i) => {
       m.color.setHex(this.tint[i]).lerp(GREY, k * 0.75);
-      if (i > 0) m.emissive.setScalar(this.flash > 0 ? 0.28 : 0);
+      if (L) {
+        // underground: glow by the light where they stand, and flash on top of it
+        m.emissive.copy(this.tints[i]).multiply(L).multiplyScalar(i === 0 ? 0.75 : 0.6);
+        if (this.flash > 0) m.emissive.addScalar(0.28);
+        if (i === 0) m.emissiveIntensity = 1;
+      } else if (i > 0) m.emissive.setScalar(this.flash > 0 ? 0.28 : 0);
     });
 
     const now = performance.now();
@@ -311,9 +359,13 @@ export class Avatars {
   get(id: number) { return this.byId.get(id); }
   all() { return this.byId.values(); }
 
-  add(id: number, name: string, col: number) {
+  /** cap lamps on everyone - the mine */
+  lamps = false;
+
+  add(id: number, name: string, col: number, team = -1) {
     if (this.byId.has(id)) this.remove(id);
-    const a = new Avatar(id, name, col);
+    const a = new Avatar(id, name, col, team);
+    if (this.lamps) a.lamp();
     this.byId.set(id, a);
     this.group.add(a.group);
     return a;

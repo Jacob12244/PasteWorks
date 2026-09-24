@@ -1,6 +1,7 @@
 import { Room } from './shared/room';
 import { PROTOCOL, TICK_HZ } from './shared/rules';
 import type { ClientMsg, ServerMsg } from './shared/protocol';
+import type { MapDef, MapId } from './shared/maps';
 import type { TriangleGrid } from '../view/grid';
 
 /**
@@ -17,19 +18,20 @@ export interface Conn {
   onClose: (code: number, opened: boolean) => void;
 }
 
-const TOKEN = 'pw-arena-token';
+/** a token for each room: the plant's keeps the name it has always had */
+const token = (map: MapId) => (map === 'plant' ? 'pw-arena-token' : 'pw-arena-token-' + map);
 
-export function savedToken(): string | undefined {
-  try { return sessionStorage.getItem(TOKEN) ?? undefined; } catch { return undefined; }
+export function savedToken(map: MapId): string | undefined {
+  try { return sessionStorage.getItem(token(map)) ?? undefined; } catch { return undefined; }
 }
-export function saveToken(k: string) {
-  try { sessionStorage.setItem(TOKEN, k); } catch { /* private window: a fresh name next time */ }
+export function saveToken(map: MapId, k: string) {
+  try { sessionStorage.setItem(token(map), k); } catch { /* private window: a fresh name next time */ }
 }
 
-/** The arena server, on this host at /play. */
-export function socket(): Conn {
+/** The arena server, on this host at /play, asking for the room this map is played in. */
+export function socket(map: MapId): Conn {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/play`);
+  const ws = new WebSocket(`${proto}//${location.host}/play?map=${map}`);
   let opened = false;
   const conn: Conn = {
     offline: false,
@@ -40,7 +42,7 @@ export function socket(): Conn {
   };
   ws.onopen = () => {
     opened = true;
-    conn.send({ t: 'hi', v: PROTOCOL, k: savedToken() });
+    conn.send({ t: 'hi', v: PROTOCOL, k: savedToken(map) });
   };
   ws.onmessage = (e) => {
     let m: ServerMsg;
@@ -56,9 +58,9 @@ export function socket(): Conn {
  * practice behaves exactly like the wire - nothing shares an object with the
  * room that it could quietly change.
  */
-export function local(grid: TriangleGrid, hash: string): Conn {
+export function local(grid: TriangleGrid, hash: string, map: MapDef): Conn {
   let n = 0;
-  const room = new Room(grid, {
+  const room = new Room(grid, map, {
     hash,
     now: () => performance.now(),
     token: () => 'local-' + (++n),

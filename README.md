@@ -18,7 +18,9 @@ still running out of the window behind the glass.
 
 And after the shift, [`/?arena`](#paste-wars) turns the pad into **Paste Wars**:
 splat tag on the running plant for up to fifteen people, with paste guns,
-rocks, and filter cake off the floor to reload.
+rocks, and filter cake off the floor to reload. [`/?arena=mine`](#the-760-level)
+takes it underground: Day shift against Night shift on a mine level, each
+crew pushing a barrow of paste into the other's stope.
 
 ---
 
@@ -514,10 +516,15 @@ and all the way up the tower stair.
 
 ## Paste Wars
 
-After the shift, the plant gets used for something else. **`/?arena`** opens
-Paste Wars: splat tag on the backfill plant, up to fifteen people at once in
-one shared room, first person, no sign-in. It has its own strip on the title
-screen, under the five worlds, with a live count of who is on shift.
+After the shift, the plant gets used for something else. Paste Wars is first
+person, no sign-in, up to fifteen people at once in each of two places:
+
+- **`/?arena`**: the plant, everyone for themselves.
+- **`/?arena=mine`**: the [760 Level](#the-760-level), underground, Day shift
+  against Night shift with a barrow of paste each.
+
+Both have a door on their own strip on the title screen, under the five
+worlds, each with a live count of who is on shift.
 
 The arena is the plant itself: the thickener, surge tank, filter press, cake
 bin, binder silos, mixing tower and paste pumps all stand where they always
@@ -565,11 +572,63 @@ page, on the same code: practice plays by exactly the rules the real thing
 does. If the room is full it does the same, and keeps asking the server until
 a slot comes up.
 
+### The 760 Level
+
+The second map is a level of an underground mine, drawn the way a mine plan
+is drawn: a main drive the length of the level with a loading bay at its
+centre, a lane either side, crosscuts across them at a skew, and dead-end
+cuddies off everything — crib rooms, a magazine, a fuel bay, sumps, a
+workshop and a drill bay, refuge chambers, and a raise going up out of the
+back. It is about 160 by 90 m and 3,000 m² of floor. Day shift comes on at
+the west end and Night shift at the east, and the level is point-symmetric
+about the loading bay, so neither crew has the better end.
+
+- **One barrow of paste a crew.** It waits full under the crew's **fill
+  point**, where the paste line comes down a borehole. `E` takes hold of it
+  (or lets go), and whoever has it pushes it at 80 % pace.
+- **Get it over the brow of their stope.** Each crew's stope is an open hole
+  behind a barricade at its end of the level. Push your barrow up to the
+  barricade and it is poured: the paste in their stope rises, your barrow
+  goes home to refill for six seconds, and three pours takes the round (seven
+  minutes, most pours at the end if nobody gets three).
+- **No throwing with your hands full.** Whoever has the barrow cannot fire
+  and is worth putting down. Plaster them and the barrow goes down where they
+  fell. Their crew can pick it up again; the other crew walks onto it and
+  it is tipped out, back to its fill point. Left lying for 25 seconds it goes
+  home by itself.
+- **No friendly fire.** Paste goes straight past your own crew. Crews are
+  filled evenly as people join, a newcomer on a tie going to the crew that is
+  behind, and are evened up again between rounds.
+- **The level plan** sits in the corner, north up, the way a surveyor draws
+  it. Your own crew is always on it, and so are both barrows, blinking when
+  one is lying about. The other crew is only on it for a moment when one of
+  them throws something.
+- **It is dark.** The drives are lit by strip lights every eleven metres,
+  and your hard hat has a cap lamp on it — so does everyone else's, and you
+  see theirs coming before you see them.
+
+```
+  E              take hold of the barrow, or let go of it
+```
+
+The rock is carved rather than modelled. Every drive, chamber and stope is a
+shape with a signed distance, the level is their union, roughened with
+seeded noise on the walls and back but never the floor, and it is meshed with
+surface nets (`src/arena/mine/level.ts`) — so junctions come out on their own
+and the floor is flat at y = 0 wherever you stand. The sixty-seven strip
+lights are not real lights: at load, every vertex of the rock and of
+everything in it gets the light from each lamp that reaches it, with the
+level's own distance field marched for shadows, and a small patch to the
+standard material adds that in (`mine/light.ts`). The only real light is your
+cap lamp. The whole level builds and bakes in under a second.
+
 ### How the room works
 
-The whole game is one transport-free class, `src/arena/shared/room.ts`. The
-arena server wraps it in WebSockets; the practice room wraps it in a loopback
-that still goes through JSON both ways. What each end owns:
+The whole game is one transport-free class, `src/arena/shared/room.ts`, given a
+map (`shared/maps.ts`) that says where it is and which game it is. The arena
+server runs one for each map and wraps them in WebSockets — a page asks for
+`/play?map=mine` — and the practice room wraps one in a loopback that still
+goes through JSON both ways. What each end owns:
 
 - **Movement belongs to the page.** Every player runs the same walker as
   *Walking the plant* and reports where it got to twenty times a second. The
@@ -577,16 +636,18 @@ that still goes through JSON both ways. What each end owns:
   distance budget, not a per-message speed, so a burst of reports held up in a
   queue does not read as a teleport — and sends back a `fix` when they are.
 - **Everything that decides a fight belongs to the room**: ammo, every lump in
-  the air, every hit, health, respawns, pickups and the round clock. A throw is
+  the air, every hit, health, respawns, pickups and the round clock — and in
+  the mine the crews, both barrows, every grab, drop, tip and pour. A throw is
   a direction; the room flies the lump at 60 Hz against the collision world
   and the players' capsules, and says where it ended.
 - **Both ends fly lumps with the same physics** (`shared/physics.ts`) against
   the **same triangles**. The server has no renderer and cannot build the
-  plant, so `npm run bake` builds the arena in a headless browser, clips the
-  collision world to the fence, and writes the triangles out
-  (`server/worlds/arena.bin.gz`, 85,000 triangles, 0.6 MB). The page builds its
-  own from the same meshes, and both fingerprint it to the centimetre — a
-  page whose plant does not match the server's bake says so in the console.
+  plant, so `npm run bake` builds each map in a headless browser, clips the
+  collision world to it, and writes the triangles out
+  (`server/worlds/arena.bin.gz`, 85,000 triangles, 0.6 MB, and `mine.bin.gz`,
+  120,000 and 0.9 MB). The page builds its own from the same meshes, and both
+  fingerprint it to the centimetre — a page whose world does not match the
+  server's bake says so in the console.
   A lump you see splat on a girder splatted on that girder on the server.
 - **Your own throws fly the moment you let go**, on your clock, drawn from the
   muzzle and easing onto the true path. Everyone else is drawn 110 ms in the
@@ -602,13 +663,19 @@ that still goes through JSON both ways. What each end owns:
   to someone else. A dropped connection holds its slot for twenty seconds, so
   a refresh gets you the same name, hat and score back.
 
-`npm run verify:arena` checks the map against the bake (every spawn is open
-standing room; every pickup lies on something you can stand over), then
-plays the server with scripted bots over real sockets — join, round start, a
-hit, a tag and a respawn, a lump stopped by a container, a hopper run dry and
-refilled on cake, a teleport refused, junk, a flood, the sixteenth player
-turned away, and the per-address cap. `node tools/arenapage.mjs` puts two
-headless browsers in the room and has one paste the other.
+`npm run verify:arena` checks both maps against their bakes (every spawn is
+open standing room; every pickup lies on something you can stand over; in the
+mine, every spawn can walk to its barrow and to the other crew's stope, and
+nobody can walk into a stope), then plays the server with scripted bots over
+real sockets — join, round start, a hit, a tag and a respawn, a lump stopped
+by a container, a hopper run dry and refilled on cake, a teleport refused,
+junk, a flood, the sixteenth player turned away, the per-address cap, and in
+the mine the crews, a grab, no throwing with the barrow, a pour, a pusher put
+down and the barrow dropped, a tip home, the crew that is behind getting the
+newcomer, and paste going straight through a crewmate.
+`node tools/arenapage.mjs` puts two headless browsers on the plant and has
+one paste the other; `node tools/minepage.mjs` puts two in the mine and has
+Day push its barrow the length of the level into Night's stope.
 
 ## Running it
 
@@ -622,7 +689,7 @@ npm run arena      # the Paste Wars server on :8481 - the dev server proxies /pl
 npm run build      # static bundle in dist/
 npm run typecheck
 npm run verify     # the five physics harnesses, outside the browser
-npm run bake       # re-bake the arena's collision world after changing anything on the pad
+npm run bake       # re-bake both arenas' collision worlds after changing anything in either
 npm run verify:arena
 ```
 
@@ -725,9 +792,19 @@ src/
     grid.ts        the triangle grid: capsule and segment tests, no DOM, shared with the server
     feel.ts        how being on foot feels in each world
   arena/           Paste Wars (only loaded for ?arena)
-    shared/        rules, map, protocol, physics and the room itself - page and server alike
-    arena.ts       the mode: boot, the line to the room, throwing, the frame loop
+    shared/        rules, both maps, protocol, physics and the room itself - page and server alike
+      maps.ts      the plant and the 760 Level: which game, where, and its baked world
+      mine.ts      the level as data: drives, stopes, crews' ends, spawns, pickups, props
+    arena.ts       the mode: boot, the line to the room, throwing, the barrows, the frame loop
     props.ts       containers, crib room, bags, barriers, cake stockpiles, fence, pickups
+    mine/          the 760 Level, built
+      level.ts     the distance field, surface nets, the plan - no DOM
+      light.ts     the lamps baked into every vertex, and the probe for things that move
+      dress.ts     lamps, vent bag, cables, rails, paste line, machines, fill points, brows
+      kit.ts       every static mesh merged by material, for the bake and for draw calls
+      build.ts     rock materials, paste in the stopes, and the underground stage
+    barrows.ts     both barrows, where the server says they are
+    minimap.ts     the level plan in the corner
     avatars.ts     everyone else, in hi-vis, drawn from snapshots
     lumps.ts       everything in the air, and the splats
     viewmodel.ts   the paste gun in your hands, with its sight glass
@@ -788,6 +865,16 @@ A few things worth knowing if you pick it up:
   in one browser find the first one idle-kicked: its `requestAnimationFrame`
   stopped the moment the second took focus, and with it the position reports.
   Give each player a browser of its own.
+- **Underground, metal is black.** Metal shows what it reflects, and in a
+  mine there is almost nothing to reflect, so steel with the plant's
+  metalness comes out as black shapes. The mine's baked materials clamp
+  metalness to 0.25 — dust dulls it anyway.
+- **A busy page stops reading its socket.** A browser only reads more from a
+  WebSocket as the page takes it, so a page stuck compiling shaders leaves the
+  server's ping unread behind everything else, and no pong goes back. The
+  server forgives one missed ping and cuts the line on the second; a dropped
+  player rejoins in the same slot. Two SwiftShader browsers on one machine can
+  stall long enough to find this out.
 - **The first visit to `?arena` under `npm run dev` reloads once.** Vite only
   finds the arena's imports (the post-processing passes) when the chunk
   loads, pre-bundles them, and reloads the page — which rejoins under the same

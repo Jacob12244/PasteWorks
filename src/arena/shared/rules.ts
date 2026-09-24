@@ -7,7 +7,7 @@
  */
 
 /** Bumped whenever a message changes shape. The server turns away any other. */
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 
 export const MAX_PLAYERS = 15;
 
@@ -31,6 +31,7 @@ export const HOLD = 20;
 /** stood still, not throwing, not turning */
 export const IDLE_KICK = 180;
 
+/** the plant's round; the mine sets its own in its map */
 export const ROUND_S = 300;
 export const INTERMISSION_S = 12;
 /** a round needs someone to lose to */
@@ -95,15 +96,13 @@ export const PICKUP: Record<PickupKind, { weapon: WeaponId; amount: number; resp
 export const PICK_REACH = { across: 1.35, up: 1.3 };
 
 /**
- * What each round is played under. The plant stays where it is; the pull
- * changes. These are keys into the walker's FEEL, so gravity, jump and speed
- * all come from the same place the rest of the app walks with.
+ * What a round is played under. The place stays where it is; the pull
+ * changes. `feel` is a key into the walker's FEEL, so gravity, jump and
+ * speed all come from the same place the rest of the app walks with. Each
+ * map has its own list, and works through it a round at a time.
  */
-export const CONDITIONS = [
-  { feel: 'earth', label: 'Surface', note: 'Earth gravity. Keep your head down.' },
-  { feel: 'space', label: 'Psyche gravity', note: 'Mag boots on. Everything you throw flies flat.' },
-] as const;
-export type ConditionKey = (typeof CONDITIONS)[number]['feel'];
+export type ConditionKey = 'earth' | 'space';
+export interface Condition { feel: ConditionKey; label: string; note: string }
 
 /**
  * The world's pull on a thrown lump. The walker's gravity is made up for the
@@ -116,6 +115,33 @@ export function throwGravity(walkerGravity: number) {
 
 /** fastest anyone should be moving across the pad under each condition, m/s */
 export const RUN_MAX: Record<ConditionKey, number> = { earth: 8, space: 5.5 };
+
+/**
+ * The mine is a team game: Day shift against Night shift, one barrow of
+ * paste each, and the other crew's stope to fill with it.
+ */
+export const TEAMS = [
+  { name: 'Day shift', short: 'DAY', col: 0xffa928, vest: 0xff8c1a },
+  { name: 'Night shift', short: 'NIGHT', col: 0x46b8ff, vest: 0x2f8fe0 },
+] as const;
+export type Team = 0 | 1;
+
+export const BARROW = {
+  /** how close your feet have to be to take hold of your own crew's barrow */
+  reach: 2.0,
+  /** an enemy this close to a barrow lying on the floor tips it out, and it goes home */
+  tip: 1.5,
+  /** left lying this long, it goes home on its own */
+  reset: 25,
+  /** after a pour: this long under the fill point before it is full again */
+  refill: 6,
+  /** pours to take a round */
+  win: 3,
+  /** how much of your pace you keep while pushing one */
+  speed: 0.8,
+  /** how close to the brow of their stope you have to get it */
+  pour: 3.2,
+};
 
 /** Everyone gets a job title. Nobody gets to type one. */
 export const ROLES = [

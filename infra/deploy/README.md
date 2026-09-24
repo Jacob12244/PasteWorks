@@ -33,16 +33,17 @@ from the pattern.
                "/"         |          "/play", "/play/status"
           127.0.0.1:8480 --+-- 127.0.0.1:8481
                web                    arena
-     (nginx static bundle :80)   (Node, WebSocket, one room)
+     (nginx static bundle :80)   (Node, WebSocket, a room per map)
 ```
 
 **There is no identity here, on purpose.** No Keycloak client, no audience
 scope, no group, nothing to provision in the `Identity` repo. Anyone with the
 link can open it, which is the whole point of the thing. The page holds no
 data, writes nothing, and makes no outbound calls — every number on screen is
-computed in the page. The arena holds one game of up to fifteen in memory and
-nothing else: names are handed out rather than typed, there is no chat, and a
-restart empties the room, which is all there is to lose. If any of that ever
+computed in the page. The arena holds two games in memory - the plant and the
+mine, up to fifteen in each - and nothing else: names are handed out rather
+than typed, there is no chat, and a restart empties the rooms, which is all
+there is to lose. If any of that ever
 changes, it stops being a link you can hand out and it needs the full
 `processpro` treatment instead.
 
@@ -91,7 +92,7 @@ docker compose up -d
 docker compose ps
 curl -sS http://127.0.0.1:8480/healthz       # -> ok
 curl -sS http://127.0.0.1:8481/healthz       # -> ok
-curl -sS http://127.0.0.1:8481/play/status   # -> {"online":0,"max":15}
+curl -sS http://127.0.0.1:8481/play/status   # -> {"online":0,"max":15,"rooms":{"plant":...,"mine":...}}
 ```
 
 The arena container is read-only, capped at 256 MB and half a core. A full
@@ -111,10 +112,14 @@ Certbot rewrites the single port 80 block into a TLS block plus a redirect,
 keeping every location, which is how the other sites here are set up.
 
 That is the whole deployment. Open `https://pasteworks.minesmart.cloud`, and
-`https://pasteworks.minesmart.cloud/?arena` for Paste Wars, and send the link
-to anyone.
+`https://pasteworks.minesmart.cloud/?arena` and `?arena=mine` for Paste Wars,
+and send the link to anyone.
 
 ## Adding Paste Wars to a running server
+
+Both maps go through the same `/play` location - the mine is `/play?map=mine`,
+and nginx passes the query string through - so the step below is the only
+one, whichever maps the arena serves.
 
 A server set up before Paste Wars needs one hand step, because certbot has
 since rewritten the live vhost and copying the repo's file over it would drop
@@ -175,8 +180,10 @@ finds it when you are logged in as `ben`. Signed in as anyone else, run it with
 `./redeploy.sh --build` builds on the server, which is an emergency fallback
 only.
 
-A redeploy restarts the arena, which empties the room. Anyone playing sees
+A redeploy restarts the arena, which empties the rooms. Anyone playing sees
 *Lost the line - reconnecting* and is back in a few seconds under a new name.
+When a redeploy changes the wire protocol, a page loaded before it is told to
+reload instead.
 
 To roll back, put `IMAGE_TAG=sha-<commit>` in `.env` and redeploy. Every push
 tags both images with `latest` and the commit they were built from.
@@ -184,13 +191,13 @@ tags both images with `latest` and the commit they were built from.
 ## Backups
 
 None. There is no stateful service — no database, no volume, no uploaded
-files, and the arena's one game lives and dies in memory. The only thing worth
+files, and the arena's games live and die in memory. The only thing worth
 keeping is the git history.
 
 ## A note on size
 
 The bundle is about 1 MB (about 290 kB gzipped), nearly all of it Three.js,
-plus a 53 kB arena chunk that only loads for `?arena`. Everything is served
+plus a 108 kB arena chunk (42 kB gzipped) that only loads for `?arena`. Everything is served
 with a year-long immutable cache on the hashed assets and `no-cache` on
 `index.html`, so a return visit is a single small request. The main page
 fetches nothing at runtime, so it works fine on a phone tether and behind a
@@ -198,4 +205,5 @@ corporate proxy; Paste Wars needs a WebSocket, which some corporate proxies
 will not pass.
 
 The arena image is about 140 MB: Node on Alpine, one bundled file, and the
-0.6 MB baked collision world.
+two baked collision worlds, 1.5 MB between them. Running, it holds both in
+well under 100 MB.

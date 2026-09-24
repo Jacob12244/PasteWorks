@@ -1,12 +1,12 @@
 /**
- * The arena server: one room, fifteen slots, no accounts.
+ * The arena server: a room for each map, fifteen slots each, no accounts.
  *
  *   npm run arena            build and run it on :8481 (the dev server proxies /play here)
  *
  * Everything that decides the game is in src/arena/shared/room.ts; this file
- * is the door. It serves the WebSocket at /play, a health check for the
- * container, and a one-line status. It keeps nothing: restart it and the
- * room is empty, which is all there ever is to lose.
+ * is the door. It serves the WebSocket at /play (?map=plant or ?map=mine), a
+ * health check for the container, and a one-line status. It keeps nothing:
+ * restart it and the rooms are empty, which is all there ever is to lose.
  *
  * Because anyone with the link can connect, the door is where the limits
  * are: an origin check, a cap on connections from one address, a cap on how
@@ -23,6 +23,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Room, type Link, type Player } from '../src/arena/shared/room';
 import { TriangleGrid, gridHash } from '../src/view/grid';
 import { TICK_HZ } from '../src/arena/shared/rules';
+import { MAPS, MAP_IDS, type MapId } from '../src/arena/shared/maps';
 import type { ServerMsg } from '../src/arena/shared/protocol';
 
 const env = process.env;
@@ -43,15 +44,15 @@ const log = (s: string) => console.log(new Date().toISOString().slice(0, 19) + '
 // ------------------------------------------------------------------ the world
 
 /**
- * The collision world, baked out of the page by tools/bake.mjs: nine
- * float32s a triangle, gzipped. Found next to the bundle in the image, and
- * in server/worlds when run from the repo.
+ * A collision world, baked out of the page by tools/bake.mjs: nine float32s
+ * a triangle, gzipped. Found next to the bundle in the image, and in
+ * server/worlds when run from the repo.
  */
-function loadWorld() {
+function loadWorld(name: string) {
   const here = __dirname;
-  const file = [env.WORLD_FILE, path.join(here, 'worlds', 'arena.bin.gz'), path.join(here, '..', 'worlds', 'arena.bin.gz')]
-    .find((f) => f && fs.existsSync(f));
-  if (!file) throw new Error('no baked world - run npm run bake');
+  const file = [path.join(here, 'worlds', name + '.bin.gz'), path.join(here, '..', 'worlds', name + '.bin.gz')]
+    .find((f) => fs.existsSync(f));
+  if (!file) throw new Error(`no baked world ${name} - run npm run bake`);
   const raw = zlib.gunzipSync(fs.readFileSync(file));
   const tris = new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
   const grid = new TriangleGrid();
@@ -60,16 +61,25 @@ function loadWorld() {
   return { grid, hash: gridHash(grid.triangles()), file };
 }
 
-const world = loadWorld();
-log(`world ${path.basename(world.file)}: ${world.grid.size} triangles, ${world.hash}`);
+const rooms = new Map<MapId, Room>();
+for (const id of MAP_IDS) {
+  const map = MAPS[id];
+  const world = loadWorld(map.world);
+  log(`${id}: world ${path.basename(world.file)}, ${world.grid.size} triangles, ${world.hash}`);
+  rooms.set(id, new Room(world.grid, map, {
+    hash: world.hash,
+    now: () => performance.now(),
+    token: () => crypto.randomBytes(12).toString('hex'),
+    log,
+  }));
+}
+setInterval(() => { for (const r of rooms.values()) r.tick(); }, 1000 / TICK_HZ);
 
-const room = new Room(world.grid, {
-  hash: world.hash,
-  now: () => performance.now(),
-  token: () => crypto.randomBytes(12).toString('hex'),
-  log,
-});
-setInterval(() => room.tick(), 1000 / TICK_HZ);
+/** /play?map=mine and so on; anything else is the plant, as it always was */
+function roomFor(url: string | undefined) {
+  const q = new URLSearchParams((url ?? '').split('?')[1] ?? '');
+  return rooms.get(q.get('map') as MapId) ?? rooms.get('plant')!;
+}
 
 // ------------------------------------------------------------------ http
 
@@ -78,8 +88,11 @@ const server = http.createServer((req, res) => {
   if (url === '/healthz') {
     res.writeHead(200, { 'content-type': 'text/plain' }).end('ok\n');
   } else if (url === '/play/status') {
+    // online and max are the plant's, as they were before there was a mine
+    const plant = rooms.get('plant')!;
+    const each = Object.fromEntries([...rooms].map(([id, r]) => [id, { online: r.online, max: r.max }]));
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-      .end(JSON.stringify({ online: room.online, max: room.max }));
+      .end(JSON.stringify({ online: plant.online, max: plant.max, rooms: each }));
   } else {
     res.writeHead(404).end();
   }
@@ -117,7 +130,8 @@ server.on('upgrade', (req, socket, head) => {
   recent.push(now);
   joins.set(ip, recent);
 
-  wss.handleUpgrade(req, socket, head, (ws) => connected(ws, ip));
+  const room = roomFor(req.url);
+  wss.handleUpgrade(req, socket, head, (ws) => connected(ws, ip, room));
 });
 
 /** One serialisation per message, however many sockets it goes to. */
@@ -128,11 +142,12 @@ function encode(m: ServerMsg) {
   return s;
 }
 
-function connected(ws: WebSocket, ip: string) {
+function connected(ws: WebSocket, ip: string, room: Room) {
   perIp.set(ip, (perIp.get(ip) ?? 0) + 1);
   let player: Player | null = null;
   let tokens = BURST, filled = performance.now(), flood = 0;
   let alive = true;
+  let missed = 0;
 
   const link: Link = {
     send(m) { if (ws.readyState === WebSocket.OPEN) ws.send(encode(m)); },
@@ -142,12 +157,18 @@ function connected(ws: WebSocket, ip: string) {
   // compiles every shader in the plant for its first frame, and the hello
   // cannot go until that is done - seconds, on a slow machine.
   const hello = setTimeout(() => ws.close(4000, 'no hello'), 20_000);
+  // Two pings unanswered, 30 to 45 seconds, and the line is dead. One is
+  // forgiven: a browser busy compiling shaders stops reading its socket,
+  // and the pong is stuck behind everything else it has not read yet.
   const ping = setInterval(() => {
-    if (!alive) return ws.terminate();
+    if (!alive && ++missed >= 2) {
+      if (player) log(`${room.map.id}: no answer to a ping from ${player.name}, cutting the line`);
+      return ws.terminate();
+    }
     alive = false;
     ws.ping();
   }, 15_000);
-  ws.on('pong', () => { alive = true; });
+  ws.on('pong', () => { alive = true; missed = 0; });
 
   ws.on('message', (data, binary) => {
     const now = performance.now();
@@ -188,11 +209,11 @@ setInterval(() => {
   for (const [ip, ts] of joins) if (ts.every((t) => now - t > 60_000)) joins.delete(ip);
 }, 60_000);
 
-server.listen(PORT, () => log(`arena on :${PORT}, ${room.max} slots, origins ${ORIGINS.join(' ')}`));
+server.listen(PORT, () => log(`arena on :${PORT}, ${[...rooms].map(([id, r]) => `${id} ${r.max}`).join(', ')} slots, origins ${ORIGINS.join(' ')}`));
 
 function stop() {
   log('stopping');
-  room.close();
+  for (const r of rooms.values()) r.close();
   server.close();
   setTimeout(() => process.exit(0), 300);
 }

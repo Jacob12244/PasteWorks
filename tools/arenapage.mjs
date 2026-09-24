@@ -35,7 +35,7 @@ async function open(label) {
   const logs = [];
   page.on("console", (m) => { logs.push(m.text()); if (/^arena: line/.test(m.text())) console.log(label, m.text()); });
   page.on('pageerror', (e) => logs.push('pageerror: ' + e.message));
-  await page.goto('http://localhost:5180/?arena', { waitUntil: 'networkidle2', timeout: 90000 });
+  await page.goto('http://localhost:5180/?arena', { waitUntil: 'networkidle2', timeout: 180000 });
   await page.waitForFunction(() => window.PW?.me?.id > 0 && window.PW.me.alive, { timeout: 30000, polling: 200 });
   await page.evaluate(() => { PW.walker.paused = false; PW.walker.onPause(false); });
   return { page, logs, label };
@@ -71,17 +71,31 @@ check('round on', round === 'play', round);
 
 // A in the south yard facing north at B, eight metres off, nothing between
 await Promise.all([walkTo(A, 16, 26, 0), walkTo(B, 16, 18, Math.PI)]);
-await sleep(2600);   // spawn shields off, avatars caught up
+await sleep(2600);   // spawn shields off
+// A busy headless page can be seconds behind: wait until A sees B standing
+// where B was sent, rather than trusting a fixed sleep
+await A.page.waitForFunction((id) => {
+  const a = PW.avatars.get(id);
+  return a && Math.hypot(a.position.x - 16, a.position.z - 18) < 0.3;
+}, { timeout: 10000, polling: 100 }, idB).catch(() => {});
 const hpBefore = await B.page.evaluate(() => PW.hud && Number(document.querySelector('#arena .hpn').textContent));
+// three throws, each one seen to leave: a stalled page can run three calls
+// inside one cooldown, and then only the first of them goes
 for (let i = 0; i < 3; i++) {
-  await A.page.evaluate(() => PW.fire(0));
-  await sleep(350);
+  await A.page.evaluate(async () => {
+    const before = PW.ammo[0];
+    for (let k = 0; k < 30 && PW.ammo[0] === before; k++) {
+      PW.fire(0);
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  });
 }
-await sleep(1200);
+await B.page.waitForFunction((hp) => Number(document.querySelector('#arena .hpn').textContent) < hp, { timeout: 8000, polling: 100 }, hpBefore).catch(() => {});
 const hpAfter = await B.page.evaluate(() => Number(document.querySelector('#arena .hpn').textContent));
 check('paste lands', hpAfter < hpBefore, `B health ${hpBefore} -> ${hpAfter}`);
 const ammoA = await A.page.evaluate(() => PW.ammo);
-check('ammo spent', ammoA[0] === 27, `A paste ${ammoA[0]}`);
+// 27, or 47 if the walk over happened to cross a filter cake
+check('ammo spent', ammoA[0] === 27 || ammoA[0] === 47, `A paste ${ammoA[0]}`);
 
 await A.page.evaluate(() => PW.fire(0));
 await sleep(120);

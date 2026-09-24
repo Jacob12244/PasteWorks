@@ -69,21 +69,29 @@ that needs sim time must be stepped synchronously rather than left to run.
 ## Paste Wars
 
 ```
-npm run bake                      # the arena's collision world -> server/worlds/arena.bin.gz (dev server up)
-npm run verify:arena              # the map against the bake, then the server against bots
-node tools/arenapage.mjs out      # two browsers in the room (dev server and npm run arena up)
+npm run bake                      # both collision worlds -> server/worlds/arena.bin.gz, mine.bin.gz (dev server up)
+npm run verify:arena              # both maps against their bakes, then the server against bots
+node tools/arenapage.mjs out      # two browsers on the plant (dev server and npm run arena up)
+node tools/minepage.mjs out       # two browsers in the mine: a barrow the length of the level
+npm run mine:plan                 # the 760 Level's plan as a PNG, straight from its field
 ```
 
-- `bake.mjs` — opens `?arena=bake`, which builds the arena exactly as a
-  player's page does and clips its collision world to the fence, and writes
-  the triangles out for the server with their fingerprint in `arena.json`.
-  Re-bake after changing anything on the pad: a prop, a spawn's surroundings,
-  a unit in the plant. A page whose plant no longer matches says so in the
-  console when it joins.
+- `bake.mjs` — opens `?arena=bake` and `?arena=bake-mine`, which build each
+  map exactly as a player's page does and clip its collision world, and
+  writes the triangles out for the server with their fingerprints in
+  `arena.json` and `mine.json`. Re-bake after changing anything in either: a
+  prop, a spawn's surroundings, a unit in the plant, a drive in the level. A
+  page whose world no longer matches says so in the console when it joins.
+  `node tools/bake.mjs http://localhost:5180/ mine` bakes just the one.
 - `arenamap.ts` — every spawn is open standing room with floor under it and
   inside the fence; every pickup lies on something, with somewhere to stand
   within reach of it. Catches a prop dropped on a spawn, and a cake put under
-  a table.
+  a table. In the mine it also floods the level's walkable floor out from
+  every spawn: each must reach its own barrow and the other crew's stope, and
+  nobody may get into a stope past its barricade.
+- `mineplan.ts` — draws the 760 Level's plan from its distance field, with
+  the fill points, pours, spawns, pickups and props marked. No browser; for
+  laying the level out.
 - `arena.mjs` — starts its own server on a spare port and plays it with
   scripted bots over real sockets: join, round start, a hit, a tag and a
   respawn, a lump stopped by a container, a hopper run dry and refilled on
@@ -93,12 +101,18 @@ node tools/arenapage.mjs out      # two browsers in the room (dev server and npm
   other, and one pastes the other; screenshots from both sides. A browser
   each, because a second tab is a background tab, a background tab stops
   animating, and the room reads that as idling.
+- `minepage.mjs` — the same in the mine: the two land on opposite crews, Day
+  takes its barrow, Night sees it taken and watches it go past, Day pushes it
+  the length of the level into Night's stope and both pages score the pour.
+  Then a real walker runs flat out into the rock, and at a stope's barricade,
+  and has to stop.
 
-In the arena the page exposes `window.PW = { stage, world, walker, avatars, lumps, hud, grid, hash, plant, vm, pickups, THREE, conn, me, ammo, round, roster, fire, setWeapon, practise }`:
+In the arena the page exposes `window.PW = { stage, walker, avatars, lumps, hud, grid, hash, vm, pickups, barrows, minimap, map, THREE, conn, me, ammo, round, roster, carrying, ts, fire, setWeapon, practise, grab }`, plus `plant` and `world` on the plant and `mine` in the mine:
 
 ```js
 PW.walker.paused = false; PW.walker.onPause(false);   // headless: no pointer lock to wait for
 PW.walker.moveTo(new PW.THREE.Vector3(x, 0.05, z));    // small steps - the room refuses a teleport
 PW.fire(0);                                            // paste, where the camera looks
 PW.practise('why');                                    // drop the server, play in the page
+PW.grab();                                             // the mine: E - take hold of the barrow, or let go
 ```

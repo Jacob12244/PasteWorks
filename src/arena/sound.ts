@@ -117,6 +117,29 @@ export class Sfx {
     this.tone(0.2, 1320, 1320, 0.2, 'triangle', 0.1);
   }
 
+  /** hands on the barrow: a clank of steel */
+  grab() {
+    if (!this.ok) return;
+    this.tone(0.08, 520, 480, 0.2, 'square');
+    this.hiss(0.12, 3000, 2, 0.15, 'bandpass');
+  }
+
+  /** the other crew has their barrow on the move */
+  alarm() {
+    if (!this.ok) return;
+    this.tone(0.14, 740, 740, 0.12, 'triangle');
+    this.tone(0.14, 620, 620, 0.12, 'triangle', 0.16);
+  }
+
+  /** a barrowload over the brow: a long wet slide, then the thump far below */
+  pour() {
+    if (!this.ok) return;
+    this.hiss(1.1, 700, 1.5, 0.4, 'lowpass', 0.25);
+    this.tone(0.5, 90, 45, 0.45, 'sine', 0.9);
+    this.tone(0.9, 311, 311, 0.14, 'sawtooth', 0.1);
+    this.tone(0.9, 415, 415, 0.1, 'sawtooth', 0.1);
+  }
+
   /** the site horn: a round starts or ends */
   horn() {
     if (!this.ok) return;

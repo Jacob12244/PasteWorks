@@ -21,9 +21,11 @@ const canvas = document.getElementById('view') as HTMLCanvasElement;
 const params = new URLSearchParams(location.search);
 const direct = scenarioById(params.get('s'));
 
-// Paste Wars is a page of its own, loaded only by the people who ask for it.
+// Paste Wars is a page of its own, loaded only by the people who ask for it:
+// ?arena for the plant, ?arena=mine for the 760 Level, bake or bake-mine for tools/bake.mjs.
 if (params.has('arena')) {
-  import('./arena/arena').then((m) => m.startArena(params.get('arena') === 'bake' ? 'bake' : 'play'));
+  const a = params.get('arena') ?? '';
+  import('./arena/arena').then((m) => m.startArena(a.startsWith('bake') ? 'bake' : 'play', a.endsWith('mine') ? 'mine' : 'plant'));
 } else if (direct) {
   start(direct, params.get('intro') !== '0');
 } else {
@@ -122,6 +124,7 @@ function start(sc: Scenario, intro: boolean) {
       stage.controls.autoRotate = false;
       stage.controls.enabled = false;
       stage.manual = true;
+      stage.onFoot(true);
       stage.camera.near = 0.15;
       stage.setFov(WALK_FOV);
       walker.enter(DOOR, 0);
@@ -135,6 +138,7 @@ function start(sc: Scenario, intro: boolean) {
       world.select(null);
       hud.selectedId = null;
       stage.manual = false;
+      stage.onFoot(false);
       stage.camera.near = 0.5;
       stage.setFov(SITE_FOV);
       stage.controls.enabled = true;

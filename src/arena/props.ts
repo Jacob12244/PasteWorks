@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { C, metal, matte, glow } from '../view/palette';
 import { box, cyl, hazard } from '../view/parts';
 import { rng } from '../view/worlds/common';
-import { BOUNDS, PROPS, PICKUPS, type Prop } from './shared/map';
+import { BOUNDS, PROPS, PICKUPS, type Prop, type Pickup } from './shared/map';
 
 /**
  * What the arena leaves lying about the pad, built from the map data.
@@ -139,7 +139,7 @@ function crates(n: number): THREE.Group {
 }
 
 /** Bulk bags of binder on pallets, a by b. */
-function bags(a: number, b: number): THREE.Group {
+export function bags(a: number, b: number): THREE.Group {
   const g = new THREE.Group();
   const bag = matte(0xe8e6de, 0.9);
   const pallet = matte(0x7a5c3a, 0.9);
@@ -168,7 +168,7 @@ function bags(a: number, b: number): THREE.Group {
 let barrierGeo: THREE.ExtrudeGeometry | null = null;
 
 /** A concrete jersey barrier, 3 m, with a reflector band. */
-function barrier(): THREE.Group {
+export function barrier(): THREE.Group {
   const g = new THREE.Group();
   if (!barrierGeo) {
     const s = new THREE.Shape();
@@ -199,7 +199,7 @@ function barrier(): THREE.Group {
 }
 
 /** A stockpile of filter cake off the press: a lumpy low dome you can walk over. */
-function mound(r: number, h: number, seed: number): THREE.Mesh {
+export function mound(r: number, h: number, seed: number, mat: THREE.Material = matte(C.cake, 0.97)): THREE.Mesh {
   const pts: THREE.Vector2[] = [];
   const N = 9;
   for (let i = 0; i <= N; i++) {
@@ -221,7 +221,7 @@ function mound(r: number, h: number, seed: number): THREE.Mesh {
     pos.setXYZ(i, x * k, y * (1 + (k - 1) * 0.5), z * k);
   }
   geo.computeVertexNormals();
-  const m = new THREE.Mesh(geo, matte(C.cake, 0.97));
+  const m = new THREE.Mesh(geo, mat);
   m.castShadow = m.receiveShadow = true;
   return m;
 }
@@ -356,7 +356,7 @@ export class Pickups {
   group = new THREE.Group();
   private items: Array<{ pile: THREE.Group; ring: THREE.Mesh; beam: THREE.Mesh; up: boolean; y: number }> = [];
 
-  constructor() {
+  constructor(list: Pickup[] = PICKUPS) {
     this.group.userData.noCollide = true;
     const rand = rng(7);
     const cake = matte(C.cake, 0.95);
@@ -368,7 +368,7 @@ export class Pickups {
     });
     const beams = { cake: beamMat(0xffab3d), rock: beamMat(0x8fd3ff) };
 
-    for (const p of PICKUPS) {
+    for (const p of list) {
       const holder = new THREE.Group();
       holder.position.set(p.x, p.y, p.z);
       const pile = new THREE.Group();

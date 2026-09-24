@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { C, metal, matte } from '../view/palette';
 import { WEAPONS, type WeaponId } from './shared/rules';
+import { barrowModel } from './barrows';
 
 /**
  * What is in your hands: the paste gun, with a sight glass on its hopper
@@ -10,6 +11,9 @@ import { WEAPONS, type WeaponId } from './shared/rules';
  * It lives in a scene of its own, drawn after the plant with the depth
  * buffer cleared, so the nozzle never disappears into a handrail you are
  * standing against.
+ *
+ * In the mine it can be a barrow instead: the tray out in front, low in
+ * the view, kept level with the floor however far you look up or down.
  */
 export class ViewModel {
   scene = new THREE.Scene();
@@ -31,15 +35,23 @@ export class ViewModel {
   private lastPitch = 0;
   private lagX = 0;
   private lagY = 0;
+  private hemi: THREE.HemisphereLight;
+  private key: THREE.DirectionalLight;
+  /** cancels the look up and down, so a barrow stays on the floor */
+  private level = new THREE.Group();
+  private barrow: THREE.Group | null = null;
+  private carrying = -1;
 
   constructor(camera: THREE.PerspectiveCamera, env: THREE.Texture | null) {
     this.scene.environment = env;
     this.scene.environmentIntensity = 0.35;
-    this.scene.add(new THREE.HemisphereLight(0x9fc4ff, 0x20160c, 0.7));
+    this.hemi = new THREE.HemisphereLight(0x9fc4ff, 0x20160c, 0.7);
+    this.scene.add(this.hemi);
     this.scene.add(this.rig);
-    this.rig.add(this.sway);
+    this.rig.add(this.sway, this.level);
     // lit from over your shoulder whichever way you face, so it never blooms out
     const key = new THREE.DirectionalLight(0xfff0dc, 1.0);
+    this.key = key;
     key.position.set(-0.6, 1, 0.4);
     this.rig.add(key, key.target);
 
@@ -124,6 +136,32 @@ export class ViewModel {
 
   set visible(v: boolean) { this.rig.visible = v; }
 
+  /** How much light there is where you stand: 1 is daylight on the plant. */
+  shade(k: number) {
+    this.hemi.intensity = 0.7 * k;
+    this.key.intensity = 1.0 * Math.min(1, k * 1.2);
+  }
+
+  /** A barrow in your hands, in a crew's colour; -1 for none. */
+  carry(team: number) {
+    if (team === this.carrying) return;
+    this.carrying = team;
+    if (this.barrow) {
+      this.level.remove(this.barrow);
+      this.barrow = null;
+    }
+    if (team >= 0) {
+      const { model } = barrowModel(team);
+      // front away from you, handles up in your hands, wheel on the floor
+      model.rotation.set(0, Math.PI / 2, -0.3, 'YZX');
+      model.position.set(0, -1.62 + 0.22, -1.75);
+      this.level.add(model);
+      this.barrow = model;
+    }
+    this.gun.visible = team < 0 && this.held === 0;
+    this.hand.visible = team < 0 && this.held === 1;
+  }
+
   update(camera: THREE.PerspectiveCamera, dt: number, speed: number, grounded: boolean, yaw: number, pitch: number) {
     this.rig.position.copy(camera.position);
     this.rig.quaternion.copy(camera.quaternion);
@@ -133,8 +171,8 @@ export class ViewModel {
       this.swap = Math.max(0, this.swap - dt * 7);
       if (this.swap === 0) {
         this.held = this.want;
-        this.gun.visible = this.held === 0;
-        this.hand.visible = this.held === 1;
+        this.gun.visible = this.held === 0 && this.carrying < 0;
+        this.hand.visible = this.held === 1 && this.carrying < 0;
       }
     } else {
       this.swap = Math.min(1, this.swap + dt * 6);
@@ -163,5 +201,8 @@ export class ViewModel {
       this.kick * (this.held === 0 ? 0.05 : -0.12),
     );
     this.sway.rotation.x = this.kick * (this.held === 0 ? 0.12 : -0.5);
+    this.level.rotation.x = -pitch;
+    this.level.position.set(this.lagX * 0.5, -Math.abs(Math.sin(this.bob)) * 0.03 * b, 0);
+    if (this.barrow) this.barrow.rotation.x = Math.sin(this.bob * 0.5) * 0.03 * b;
   }
 }

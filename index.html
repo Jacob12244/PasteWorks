@@ -609,22 +609,16 @@
     color: var(--muted); transition: color .2s ease;
   }
   .wl-card:hover .wl-go { color: var(--acc); }
-  /* Paste Wars: a strip under the worlds, in the arena's hi-vis orange */
+  /* Paste Wars: a strip under the worlds, in the arena's hi-vis orange, with a door for each map */
   .wl-arena {
     position: relative; box-sizing: border-box; width: 100%; max-width: 1560px; margin-top: -1vh;
     display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px 22px;
-    padding: 14px 22px; text-decoration: none; color: var(--txt);
+    padding: 12px 14px 12px 22px; color: var(--txt);
     background: linear-gradient(90deg, rgba(255,122,26,.13), rgba(10,15,23,.86) 40%);
     border: 1px solid rgba(255,122,26,.32); border-radius: 14px;
     box-shadow: 0 14px 40px rgba(0,0,0,.5);
-    transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
   }
-  .wl-arena:hover, .wl-arena:focus-visible {
-    transform: translateY(-4px); border-color: #ff7a1a; outline: none;
-    box-shadow: 0 22px 60px rgba(0,0,0,.6), 0 0 0 1px #ff7a1a, 0 0 40px -8px #ff7a1a;
-  }
-  .wl-arena svg { width: 40px; height: 40px; transition: transform .4s ease; }
-  .wl-arena:hover svg { transform: rotate(-12deg) scale(1.08); }
+  .wl-arena svg { width: 40px; height: 40px; }
   .wa-name { display: flex; flex-direction: column; gap: 3px; }
   .wa-name em {
     font-style: normal; font-family: var(--mono); font-size: 11px;
@@ -632,18 +626,32 @@
   }
   .wa-name b { font-size: 18px; font-weight: 700; letter-spacing: .28em; color: #f1f5fb; white-space: nowrap; }
   .wa-text { font-size: 12.5px; line-height: 1.5; color: #b7c3d4; }
-  .wa-count { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
-  .wa-go {
-    font-size: 11px; letter-spacing: .2em; text-transform: uppercase; white-space: nowrap;
-    color: var(--muted); transition: color .2s ease;
+  .wa-door {
+    display: grid; grid-template-columns: auto auto; align-items: baseline; align-self: stretch; gap: 2px 16px; min-width: 210px;
+    padding: 10px 14px; text-decoration: none; color: var(--txt); border-radius: 10px;
+    background: rgba(255,255,255,.03); border: 1px solid rgba(255,122,26,.22);
+    transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
   }
-  .wl-arena:hover .wa-go { color: #ff7a1a; }
-  @media (max-width: 900px) {
-    .wl-arena { grid-template-columns: auto minmax(0, 1fr) auto; }
-    .wa-name { grid-column: 2 / 4; }
-    .wa-text { grid-column: 1 / -1; }
-    .wa-count { grid-column: 1 / 3; }
-    .wa-go { grid-column: 3; }
+  .wa-door:hover, .wa-door:focus-visible {
+    transform: translateY(-3px); border-color: #ff7a1a; outline: none;
+    box-shadow: 0 16px 40px rgba(0,0,0,.55), 0 0 0 1px #ff7a1a, 0 0 30px -8px #ff7a1a;
+  }
+  .wa-door b { font-size: 14px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #f1f5fb; }
+  .wa-door > span:nth-of-type(1) { grid-column: 1 / -1; grid-row: 2; font-size: 11.5px; color: #b7c3d4; max-width: 250px; line-height: 1.4; }
+  .wa-count { grid-row: 1; grid-column: 2; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; justify-self: end; }
+  .wa-go {
+    grid-column: 1 / -1; font-size: 10.5px; letter-spacing: .2em; text-transform: uppercase; white-space: nowrap;
+    color: var(--muted); transition: color .2s ease; margin-top: 4px;
+  }
+  .wa-door:hover .wa-go { color: #ff7a1a; }
+  @media (max-width: 1100px) {
+    .wl-arena { grid-template-columns: 1fr 1fr; }
+    .wl-arena svg { display: none; }
+    .wa-name, .wa-text { grid-column: 1 / -1; }
+  }
+  @media (max-width: 640px) {
+    .wl-arena { grid-template-columns: minmax(0, 1fr); padding: 14px; }
+    .wl-arena svg { display: none; }
   }
   #welcome footer {
     position: relative; display: flex; flex-wrap: wrap; justify-content: center;
