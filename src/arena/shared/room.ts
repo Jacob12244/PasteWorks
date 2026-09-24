@@ -45,6 +45,8 @@ export interface RoomOptions {
   random?: () => number;
   max?: number;
   log?: (line: string) => void;
+  /** for tests: every power-cut time multiplied by this */
+  powerScale?: number;
 }
 
 export interface Player {
@@ -138,6 +140,8 @@ export class Room {
   private barrows: Barrow[] = [];
   /** pours this round, Day and Night */
   private score: [number, number] = [0, 0];
+  /** the mine's mains: off at, back at, and the next cut due (0: not yet drawn). Room seconds */
+  private mains = { at: 0, end: 0, next: 0 };
   readonly max: number;
 
   constructor(private grid: Tracer, readonly map: MapDef, private o: RoomOptions) {
@@ -210,6 +214,7 @@ export class Room {
       players: this.roster(),
       picks: this.picks.flatMap((q, i) => (q.up ? [i] : [])),
       ...(this.teams ? { bar: [this.info(this.barrows[0]), this.info(this.barrows[1])], ts: this.score } : {}),
+      ...(t < this.mains.end ? { out: [this.ms(this.mains.at), this.ms(this.mains.end)] as [number, number] } : {}),
     });
     this.broadcast({ t: 'J', id: p.id, name: p.name, col: p.col, tm: p.team }, p);
     this.respawn(p, t);
@@ -303,7 +308,7 @@ export class Room {
     p.yaw = a[0] % (Math.PI * 2);
     p.pitch = Math.max(-1.6, Math.min(1.6, a[1]));
     p.w = m.w === 1 ? 1 : 0;
-    p.flags = (m.f as number) & (F.floor | F.run | F.away);
+    p.flags = (m.f as number) & (F.floor | F.run | F.away | (this.teams ? F.dark : 0));
     // positions from a previous life, or from the floor after going down, are history
     if (!p.alive || m.l !== p.life) return;
 
@@ -397,6 +402,7 @@ export class Room {
     this.fly(t);
     this.pickups(t);
     if (this.teams) this.tend(t);
+    if (this.map.power) this.power(t);
 
     if (t >= this.snapAt) {
       this.snapAt = Math.max(this.snapAt + 1 / SNAP_HZ, t - 0.02);
@@ -408,7 +414,8 @@ export class Room {
     const P: Array<[number, number, number, number, number, number, number, number, WeaponId]> = [];
     for (const p of this.players.values()) {
       if (!p.link) continue;
-      const f = p.flags | (p.alive ? F.alive : 0) | (t < p.shieldUntil ? F.shield : 0) | (p.carrying ? F.carry : 0);
+      // nobody pushes a barrow through the dark with their lamp off
+      const f = (p.carrying ? (p.flags & ~F.dark) | F.carry : p.flags) | (p.alive ? F.alive : 0) | (t < p.shieldUntil ? F.shield : 0);
       P.push([p.id, r2(p.x), r2(p.y), r2(p.z), r3(p.yaw), r3(p.pitch), Math.ceil(p.hp), f, p.w]);
     }
     this.broadcast({ t: 'S', T: this.ms(t), P });
@@ -672,6 +679,42 @@ export class Room {
     if (this.round.st === 'play' && this.score[b.team] >= BARROW.win) this.endRound(t);
   }
 
+  // ------------------------------------------------------------ the mains
+
+  /** a time drawn from a [min, max] of the map's power cuts, in seconds */
+  private span(r: readonly [number, number]) {
+    return (r[0] + (r[1] - r[0]) * this.rnd()) * (this.o.powerScale ?? 1);
+  }
+
+  /**
+   * Every so often, the lights go. Only the time is the room's: nothing in
+   * the game changes but what everyone can see, so it is one message out
+   * and each page does its own flicker and dark from it. Not while the
+   * scores are up, and not for an empty level.
+   */
+  private power(t: number) {
+    const P = this.map.power!, m = this.mains;
+    if (!this.online) { m.next = 0; return; }
+    if (!m.next) { m.next = t + this.span(P.first); return; }
+    if (this.round.st === 'end' || t < m.next) return;
+    m.at = t + P.warn * (this.o.powerScale ?? 1);
+    m.end = m.at + this.span(P.out);
+    m.next = m.end + this.span(P.gap);
+    this.broadcast({ t: 'O', at: this.ms(m.at), end: this.ms(m.end) });
+    this.o.log?.(`${this.map.id}: power cut, ${(m.end - m.at).toFixed(0)} s`);
+  }
+
+  /** Lights on now, if they are off or about to go, and the next cut a round's first one away. */
+  private restore(t: number) {
+    const P = this.map.power, m = this.mains;
+    if (!P) return;
+    m.next = t + this.span(P.first);
+    if (t >= m.end) return;
+    m.at = Math.min(m.at, t);
+    m.end = t;
+    this.broadcast({ t: 'O', at: this.ms(m.at), end: this.ms(m.end) });
+  }
+
   // ------------------------------------------------------------ rounds
 
   private rounds(t: number) {
@@ -692,6 +735,7 @@ export class Room {
     this.picks.forEach((k) => { k.up = true; k.back = 0; });
     for (const p of this.players.values()) { p.tags = 0; p.deaths = 0; p.pours = 0; p.carrying = false; }
     this.score = [0, 0];
+    this.restore(t);
     if (this.teams) this.even();
     this.setRound({ st: 'play', n, ends: this.ms(t + this.map.round), c: (n - 1) % this.map.conditions.length });
     this.picks.forEach((_, i) => this.broadcast({ t: 'P', i, on: 1 }));
@@ -728,6 +772,8 @@ export class Room {
       r.win = this.score[0] > this.score[1] ? 0 : this.score[1] > this.score[0] ? 1 : -1;
       for (const b of this.barrows) if (b.st !== 'home') this.home(b, 'round');
     }
+    // lights on for the scoreboard
+    this.restore(t);
     this.setRound(r);
   }
 

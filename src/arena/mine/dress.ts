@@ -120,6 +120,7 @@ function onWall(f: Field, o: THREE.Object3D, x: number, y: number, z: number, dx
 // ------------------------------------------------------------------ lamps
 
 const FLUORO = glow(0xfff0d8, 3.2);
+const FLOOD = glow(0xfff2dc, 4);
 
 function fixture(tx: number, tz: number, drop: number): THREE.Group {
   const g = detail(new THREE.Group());
@@ -171,7 +172,7 @@ function lamps(f: Field, out: THREE.Group): Lamp[] {
     list.push({ p: V(x, 5.5, z), col: new THREE.Color(0xfff2dc), i: 2.4, r: 30 });
     const flood = new THREE.Group();
     const head = box(0.5, 0.35, 0.3, metal(0x2b3038, 0.5, 0.6));
-    const lens = box(0.44, 0.28, 0.02, glow(0xfff2dc, 4));
+    const lens = box(0.44, 0.28, 0.02, FLOOD);
     lens.position.z = 0.16;
     flood.add(head, lens);
     flood.position.set(b.brow[0] - b.into[0] * 0.6, backAt(f, b.brow[0] - b.into[0] * 0.6, b.brow[1] - b.into[1] * 0.6) - 0.3, b.brow[1] - b.into[1] * 0.6);
@@ -644,6 +645,12 @@ export interface Dressed {
   /** static, into the kit */
   fixed: THREE.Group;
   lamps: Lamp[];
+  /**
+   * The paint of everything that shines off the mains - the strip lights and
+   * the stope floods - to go out in a power cut. The beacons, the refuge
+   * chamber's strobe and the loader's lights are on batteries.
+   */
+  mains: Set<THREE.Material>;
 }
 
 export function dress(f: Field, kit: Kit): Dressed {
@@ -667,5 +674,5 @@ export function dress(f: Field, kit: Kit): Dressed {
     brow(f, b, t, fixed);
   });
   kit.take(fixed);
-  return { fixed, lamps: lampList };
+  return { fixed, lamps: lampList, mains: new Set([FLUORO, FLOOD]) };
 }

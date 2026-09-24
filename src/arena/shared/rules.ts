@@ -143,6 +143,24 @@ export const BARROW = {
   pour: 3.2,
 };
 
+/**
+ * Power cuts, in the mine: every so often the mains trips and every light on
+ * the level goes out, bar the lamp on each hat. A few seconds of flicker
+ * first, then dark for a while, then the tubes strike back up. Seconds;
+ * each [min, max] is drawn fresh every time.
+ */
+export interface PowerCuts {
+  /** into a round before the first */
+  first: readonly [number, number];
+  /** how long it stays dark */
+  out: readonly [number, number];
+  /** from the lights coming back to the next cut */
+  gap: readonly [number, number];
+  /** the flicker before it goes */
+  warn: number;
+}
+export const POWER_CUTS: PowerCuts = { first: [40, 100], out: [18, 32], gap: [60, 130], warn: 2.5 };
+
 /** Everyone gets a job title. Nobody gets to type one. */
 export const ROLES = [
   'Fitter', 'Sparky', 'Boilermaker', 'Rigger', 'Dogman', 'Shift Boss', 'Metallurgist',

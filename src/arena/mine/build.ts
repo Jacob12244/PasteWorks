@@ -6,7 +6,7 @@ import type { Look } from '../../scenario/types';
 import { Field, Samples, mesh, plan, rockNoise, type Plan } from './level';
 import { Kit } from './kit';
 import { dress } from './dress';
-import { Baker, Probe, bakedMaterial } from './light';
+import { Baker, Probe, BAKED, bakedMaterial } from './light';
 import { BASES } from '../shared/mine';
 import { TEAMS } from '../shared/rules';
 
@@ -99,6 +99,9 @@ export class Mine {
   private levelTo = [-24, -24];
   private beacons: THREE.Mesh[] = [];
   private time = 0;
+  /** what glows off the mains, and how brightly with the power on */
+  private tubes: Array<{ m: THREE.MeshStandardMaterial; i: number }> = [];
+  private powered = 1;
 
   constructor(opts: { light: boolean }) {
     const t0 = performance.now();
@@ -133,7 +136,7 @@ export class Mine {
 
     t = performance.now();
     const kit = new Kit();
-    const { lamps } = dress(this.field, kit);
+    const { lamps, mains } = dress(this.field, kit);
     const fixed = kit.build();
     this.root.add(fixed);
     lap(`dressing ${fixed.children.length} meshes, ${lamps.length} lamps`, t);
@@ -149,7 +152,12 @@ export class Mine {
       for (const m of fixed.children as THREE.Mesh[]) {
         if (!m.material || !(m.material as THREE.Material).visible) continue;
         baker.bake(m.geometry);
-        m.material = bakedMaterial(m.material as THREE.Material);
+        const was = m.material as THREE.MeshStandardMaterial;
+        m.material = bakedMaterial(was);
+        if (mains.has(was)) {
+          const tube = m.material as THREE.MeshStandardMaterial;
+          if (!this.tubes.some((q) => q.m === tube)) this.tubes.push({ m: tube, i: tube.emissiveIntensity });
+        }
       }
       lap('light', t);
       t = performance.now();
@@ -243,18 +251,35 @@ export class Mine {
     this.fx.update(dt);
   }
 
+  /**
+   * The mains, 0 to 1: every baked lamp, the tubes that stand for them and
+   * the little light that gets everywhere, turned down together. What is
+   * left at 0 is whatever is on a battery, and the lamps on people's hats.
+   */
+  power(k: number, stage: Stage) {
+    if (k === this.powered) return;
+    this.powered = k;
+    BAKED.value = Math.PI * k;
+    for (const { m, i } of this.tubes) m.emissiveIntensity = i * k;
+    // not quite nothing: a screen's black is not the dark's
+    stage.hemi.intensity = LOOK.hemi.intensity * (0.05 + 0.95 * k);
+    stage.scene.environmentIntensity = LOOK.env * k;
+  }
+
   /** Light the stage for underground: no sky, no sun, a dusty dark, and the lamps baked in. */
   static stage(stage: Stage) {
-    stage.applyLook({
-      sky: [0x040302, 0x040302, 0x040302],
-      fog: { color: 0x0a0806, density: 0.02 },
-      hemi: { sky: 0x6e6a62, ground: 0x26231f, intensity: 0.3 },
-      key: { color: 0xffffff, intensity: 0 },
-      fill: 0, rim: 0, pools: 0,
-      exposure: 1.05,
-      bloom: [0.5, 0.45, 0.8],
-      env: 0.1,
-    } as unknown as Look);
+    stage.applyLook(LOOK);
     stage.key.castShadow = false;
   }
 }
+
+const LOOK = {
+  sky: [0x040302, 0x040302, 0x040302],
+  fog: { color: 0x0a0806, density: 0.02 },
+  hemi: { sky: 0x6e6a62, ground: 0x26231f, intensity: 0.3 },
+  key: { color: 0xffffff, intensity: 0 },
+  fill: 0, rim: 0, pools: 0,
+  exposure: 1.05,
+  bloom: [0.5, 0.45, 0.8],
+  env: 0.1,
+} as unknown as Look;

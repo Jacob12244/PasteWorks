@@ -606,10 +606,29 @@ about the loading bay, so neither crew has the better end.
 - **It is dark.** The drives are lit by strip lights every eleven metres,
   and your hard hat has a cap lamp on it — so does everyone else's, and you
   see theirs coming before you see them.
+- **And sometimes the power goes.** A minute or two into a round, and every
+  minute or two after that, the mains trips: the strip lights stutter for a
+  couple of seconds, then everything goes out for 18–32 seconds but the lamps
+  on people's hats. You see the other crew by their lamps — the glare of one
+  looking your way, its beam in the dust, the pool of it on the rock round a
+  corner — and their names only where your own lamp is on them. The beacons
+  over the fill points, the refuge chambers and the parked loader are on
+  batteries and stay lit. The power always comes back on for the scoreboard.
+- **Your lamp has a switch.** `L` turns it off: no glare, no beam, nothing on
+  the rock to give you away — and you see next to nothing. It comes back on
+  when you respawn, and it cannot be off while you have the barrow, so
+  nobody sneaks a pour through the dark.
 
 ```
   E              take hold of the barrow, or let go of it
+  L              your cap lamp, off or on
+  `              frame rate, and how many pixels it is drawn at
 ```
+
+A frame is drawn at no more than 1920 × 1200 pixels' worth, whatever the
+screen; a bigger screen draws that many and scales them up rather than asking
+the same graphics chip for four times the work. `?res=full` draws every
+pixel the screen has, and `?fps` starts with the frame rate showing.
 
 The rock is carved rather than modelled. Every drive, chamber and stope is a
 shape with a signed distance, the level is their union, roughened with
@@ -619,8 +638,13 @@ and the floor is flat at y = 0 wherever you stand. The sixty-seven strip
 lights are not real lights: at load, every vertex of the rock and of
 everything in it gets the light from each lamp that reaches it, with the
 level's own distance field marched for shadows, and a small patch to the
-standard material adds that in (`mine/light.ts`). The only real light is your
-cap lamp. The whole level builds and bakes in under a second.
+standard material adds that in (`mine/light.ts`). The only real lights are
+your cap lamp and the two nearest of everyone else's. The whole level builds
+and bakes in under a second. Because every lamp is baked into one number, a
+power cut is that number going to nothing: the room only sends when the lights
+go and when they come back (`O`), and each page works the flicker, the dark
+and the strike back up from the server's clock, so every page goes dark
+together.
 
 ### How the room works
 
@@ -672,10 +696,15 @@ by a container, a hopper run dry and refilled on cake, a teleport refused,
 junk, a flood, the sixteenth player turned away, the per-address cap, and in
 the mine the crews, a grab, no throwing with the barrow, a pour, a pusher put
 down and the barrow dropped, a tip home, the crew that is behind getting the
-newcomer, and paste going straight through a crewmate.
+newcomer, paste going straight through a crewmate, and power cuts (sped up,
+with `POWER_SCALE`) coming and going, with someone joining in the dark told
+how long it has left, and a cap lamp switched off showing as off — except on
+whoever has the barrow.
 `node tools/arenapage.mjs` puts two headless browsers on the plant and has
 one paste the other; `node tools/minepage.mjs` puts two in the mine and has
-Day push its barrow the length of the level into Night's stope.
+Day push its barrow the length of the level into Night's stope, has Night
+switch its lamp off and Day see it go out, then turns the lights off on one
+of them.
 
 ## Running it
 

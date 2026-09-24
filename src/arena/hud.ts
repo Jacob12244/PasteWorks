@@ -44,6 +44,7 @@ export class ArenaHud {
           <li><kbd>E</kbd> take hold of your barrow, or let go &middot; touch theirs to send it home</li>
           <li><kbd>Click</kbd> paste gun &middot; <kbd>Right click</kbd> throw a rock &middot; <kbd>Tab</kbd> scores</li>
           <li>Walk over <em class="cake">filter cake</em> for paste, and <em class="rock">rock</em> for rocks</li>
+          <li>Now and then the power goes: cap lamps only, until it comes back. <kbd>L</kbd> switches yours off - they cannot see you coming, and you cannot see much</li>
         </ul>`
       : `<b>PASTE WARS</b>
         <p class="lead">After-shift splat tag on the backfill plant. Paste gun or rocks - no score counts until two are on shift.</p>
@@ -67,6 +68,7 @@ export class ArenaHud {
       <div class="toast"></div>
       <div class="vignette"></div>
       <div class="hint"></div>
+      <div class="perf"></div>
       <div class="hp"><label>HEALTH</label><b class="hpn">100</b><div class="bar"><i class="hpb"></i></div></div>
       <div class="ammo">
         <div class="slot s0"><kbd>1</kbd><label>${WEAPONS[0].short}</label><b class="a0">0</b><small>/${WEAPONS[0].cap}</small></div>
@@ -122,6 +124,12 @@ export class ArenaHud {
     b.classList.add('on');
     clearTimeout(this.bannerTimer);
     this.bannerTimer = window.setTimeout(() => b.classList.remove('on'), ms);
+  }
+
+  /** the frame rate and what it is drawn at, in the corner; null to hide it */
+  perf(text: string | null) {
+    this.el.perf.textContent = text ?? '';
+    this.el.perf.classList.toggle('on', !!text);
   }
 
   /** what to do about the barrow in your hands, or near your feet */

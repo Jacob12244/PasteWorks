@@ -17,6 +17,10 @@ import type { Samples } from './level';
  * Things that move - people, barrows, what is in your hands - are not
  * baked. They ask a coarse grid of the same light at waist height what the
  * light is like where they are standing, and glow that much.
+ *
+ * All of it is on the mains, so a power cut is one number: the baked light,
+ * the probe and the glow of the tubes all go down together, and what is left
+ * is the real lights - the one on each hat.
  */
 
 export interface Lamp {
@@ -29,6 +33,30 @@ export interface Lamp {
 
 /** turned up and down together - a whole level going dark would be one number */
 export const BAKED = { value: Math.PI };
+
+/** how long the tubes take to strike back up after a power cut, ms */
+const STRIKE = 1400;
+
+/**
+ * What the mains is giving, 0 to 1, at server time `now` for a cut from `at`
+ * to `end` (ms): stuttering for `warn` seconds beforehand, worse as it gets
+ * closer, then dark, then the tubes catching one flicker at a time. The
+ * stutter is worked from the clock, so every page flickers together.
+ */
+export function mains(now: number, at: number, end: number, warn: number): number {
+  if (now < at - warn * 1000 || now >= end + STRIKE) return 1;
+  if (now >= at && now < end) return 0;
+  const n = Math.floor(now / 55);
+  const h = (((Math.sin(n * 12.9898) * 43758.5453) % 1) + 1) % 1;
+  if (now < at) {
+    // the chance of a drop-out in any twentieth of a second, rising to the cut
+    const p = 0.15 + 0.6 * (1 - (at - now) / (warn * 1000));
+    return h < p ? 0.1 + (h / p) * 0.35 : 1;
+  }
+  const k = (now - end) / STRIKE;
+  if (k < 0.2) return 0;
+  return h < 0.75 * (1 - k) ? 0.15 : 1;
+}
 
 const patched = new WeakMap<THREE.Material, THREE.Material>();
 

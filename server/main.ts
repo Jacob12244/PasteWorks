@@ -38,6 +38,8 @@ const PER_IP = Number(env.PER_IP ?? 6);
 const JOINS_PER_MIN = Number(env.JOINS_PER_MIN ?? 20);
 /** messages a second per socket, and the burst on top */
 const RATE = 60, BURST = 120;
+/** tests only: the mine's power cuts, sped up by this much (0.05 is twenty times as often) */
+const POWER_SCALE = Number(env.POWER_SCALE ?? 1);
 
 const log = (s: string) => console.log(new Date().toISOString().slice(0, 19) + 'Z ' + s);
 
@@ -71,6 +73,7 @@ for (const id of MAP_IDS) {
     now: () => performance.now(),
     token: () => crypto.randomBytes(12).toString('hex'),
     log,
+    powerScale: POWER_SCALE,
   }));
 }
 setInterval(() => { for (const r of rooms.values()) r.tick(); }, 1000 / TICK_HZ);

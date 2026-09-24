@@ -25,6 +25,9 @@
 //   tip       the other crew walking onto it sends it home
 //   friendly  paste goes straight through your own crew
 //   status    /play/status counts each room
+//   power     the lights go and come back, again and again (sped up here), and
+//             someone joining in the dark is told how long it has left
+//   lamp      a cap lamp switched off shows as off - but never with the barrow
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,6 +67,8 @@ class Bot {
     this.life = 0;
     this.ammo = [0, 0];
     this.closed = null;
+    /** flag bits in each report: on the floor, and 64 for the cap lamp off */
+    this.f = 1;
     this.open = new Promise((res, rej) => {
       this.ws.on('open', res);
       this.ws.on('error', rej);
@@ -94,7 +99,7 @@ class Bot {
     }
   }
   report() {
-    this.send({ t: 's', p: this.pos, a: [0, 0], w: 0, f: 1, l: this.life });
+    this.send({ t: 's', p: this.pos, a: [0, 0], w: 0, f: this.f, l: this.life });
   }
   /** walk there in a straight line at a jog, reporting as a page would */
   async walkTo(x, z) {
@@ -124,7 +129,7 @@ class Bot {
 }
 
 const PORT = 8499;
-const srv = server(PORT, { PER_IP: '50', JOINS_PER_MIN: '500' });
+const srv = server(PORT, { PER_IP: '50', JOINS_PER_MIN: '500', POWER_SCALE: '0.03' });
 try {
   await srv.ready;
 
@@ -229,6 +234,14 @@ try {
   day.fireAt([-60, 1.5, 5], 5001);
   const thrown = await day.wait((m) => m.t === 'F' && m.o === day.id, 500, f0);
   check('mine: no throwing with the barrow', !thrown);
+  // ...nor switch their lamp off: the other crew still sees it lit
+  day.f = 1 | 64;
+  const s0 = night.msgs.length;
+  day.report();
+  const seen = await night.wait((m) => m.t === 'S' && m.P.some((q) => q[0] === day.id), 1000, s0 + 1);
+  const dayFlags = seen?.P.find((q) => q[0] === day.id)?.[7] ?? 0;
+  check('mine: no dark with the barrow', !!seen && (dayFlags & 32) !== 0 && (dayFlags & 64) === 0, `flags ${dayFlags}`);
+  day.f = 1;
 
   // over the brow of Night's stope: the far end of the level, the long way in a straight line
   await day.walkTo(58, 26);
@@ -292,9 +305,29 @@ try {
   const land = await m3.wait((m) => m.t === "X" || m.t === "H", 2000, f3);
   check('mine: no friendly fire', !!land && land.t === 'X', land ? (land.t === 'H' ? `hit ${land.v}` : 'went past, hit the rock') : 'nothing came back');
 
+  // a lamp switched off, with nothing in your hands, is off for everyone
+  m3.f = 1 | 64;
+  m3.report();
+  const s1 = day.msgs.length;
+  const off = await day.wait((m) => m.t === 'S' && m.P.some((q) => q[0] === m3.id && (q[7] & 64)), 1500, s1);
+  check('mine: cap lamp off', !!off);
+  m3.f = 1;
+
   const st = await (await fetch(`http://127.0.0.1:${PORT}/play/status`)).json();
   check('status per room', st.rooms?.mine?.online === 3 && st.rooms?.plant?.online === st.online, JSON.stringify(st.rooms));
-  [m1, m2, m3].forEach((b) => b.close());
+
+  // the power has been going all along, twenty-odd times as often as it would
+  const cuts = day.msgs.filter((m) => m.t === 'O');
+  const spaced = cuts.every((c, i) => c.end > c.at && (i === 0 || c.at > cuts[i - 1].end));
+  check('mine: power cuts', cuts.length >= 3 && spaced,
+    `${cuts.length} cuts, ${cuts.slice(0, 3).map((c) => ((c.end - c.at) / 1000).toFixed(2) + ' s').join(', ')}...`);
+  // and someone clocking on in the dark is told so
+  const o0 = m3.msgs.length;
+  const next = await m3.wait((m) => m.t === 'O', 8000, o0);
+  const m4 = new Bot(PORT, 'mine');
+  const h4 = next && await m4.hello();
+  check('mine: joins in the dark', !!h4?.out && h4.out[0] === next.at && h4.out[1] === next.end, h4?.out ? `off ${h4.out.join(' - ')}` : 'no cut in the hello');
+  [m1, m2, m3, m4].forEach((b) => b.close());
   await sleep(200);
 
   // ---- full, last: a slot is held a while after a socket goes, so

@@ -29,11 +29,13 @@ export const F = {
   run: 2,
   /** alt-tabbed, or the mouse is loose */
   away: 4,
-  // snapshot only
+  // snapshot only (and dark, which is both)
   alive: 8,
   shield: 16,
   /** pushing a barrow */
   carry: 32,
+  /** cap lamp switched off - never while pushing a barrow */
+  dark: 64,
 } as const;
 
 // ------------------------------------------------------------ server -> page
@@ -88,6 +90,8 @@ export type ServerMsg =
       /** the barrow game: both barrows, and the pours so far this round */
       bar?: [BarrowInfo, BarrowInfo];
       ts?: [number, number];
+      /** a power cut on now, or about to be: off at, back at, server ms */
+      out?: [number, number];
     }
   | { t: 'full'; max: number }
   /** said just before the socket is closed on you */
@@ -124,5 +128,11 @@ export type ServerMsg =
       t: 'B'; b: Team; ev: 'grab' | 'drop' | 'tip' | 'pour' | 'reset' | 'full' | 'round';
       by?: number; ts: [number, number]; T: number;
     } & BarrowInfo
+  /**
+   * The mains is going: the lights go at `at` and come back at `end`, server
+   * ms, flickering for the map's `warn` seconds beforehand. Sent again with
+   * `end` brought forward if they come back early, at a round's end.
+   */
+  | { t: 'O'; at: number; end: number }
   /** that is not where you are - go back here */
   | { t: 'fix'; p: V3 };

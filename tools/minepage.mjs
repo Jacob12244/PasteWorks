@@ -9,7 +9,8 @@
 // with Night's page watching from the fill cuddy on the way out. Checks that
 // the two pages land on opposite crews, that the grab and the pour show on
 // both, that a real walker is stopped by the rock and by a stope's
-// barricade, and leaves screenshots from each side along the way.
+// barricade, that a power cut goes dark and comes back, and leaves
+// screenshots from each side along the way.
 import puppeteer from 'puppeteer-core';
 import path from 'node:path';
 
@@ -79,7 +80,7 @@ await Promise.all([
 await sleep(600);
 await D.page.evaluate(() => PW.grab());
 // a busy page takes a while to hear back: wait for the word, rather than a fixed time
-const heard = (p, fn) => p.page.waitForFunction(fn, { timeout: 8000, polling: 100 }).then(() => true, () => false);
+const heard = (p, fn, ...args) => p.page.waitForFunction(fn, { timeout: 15000, polling: 100 }, ...args).then(() => true, () => false);
 check('day grabs its barrow', await heard(D, () => PW.carrying));
 check('night sees it taken', await heard(N, () => PW.barrows.get(0).st === 'held'), await N.page.evaluate(() => PW.barrows.get(0).st));
 await D.page.screenshot({ path: path.join(out, 'mine-carry.png') });
@@ -99,6 +100,14 @@ check('pour', tsD[0] === 1 && tsN[0] === 1, `day page ${tsD.join('-')}, night pa
 await sleep(2500);
 await D.page.screenshot({ path: path.join(out, 'mine-pour.png') });
 
+// Night switches its cap lamp off with L, and Day's page sees it go out. (Before the
+// flat-out runs below: those hold Day's page long enough to miss pings and be cut.)
+const nId = await N.page.evaluate(() => PW.me.id);
+await N.page.evaluate(() => dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyL' })));
+const offHere = await heard(N, () => !PW.lamp);
+const offThere = await heard(D, (id) => PW.avatars.get(id)?.lampOn === false, nId);
+check('cap lamp off, seen off', offHere && offThere, `on its own page ${offHere}, on the other ${offThere}`);
+
 // a real walker, with its own collision, running flat out: into the wall, then at the barricade
 const run = (x, z, yaw) => D.page.evaluate((x, z, yaw) => {
   const w = PW.walker;
@@ -115,6 +124,13 @@ check('rock holds', wall[2] > 1.5 && Math.abs(wall[1]) < 0.3, `ran north from z 
 const stop = await run(61 - 0.414 * 6, 31 - 0.91 * 6, Math.atan2(-0.414, -0.91));
 const past = (stop[0] - 61) * 0.414 + (stop[2] - 31) * 0.91;
 check('barricade holds', past < 0 && stop[1] > -0.5, `stopped ${(-past).toFixed(2)} m short of the brow`);
+
+// a power cut on Night's page: flicker, dark - nothing baked, no tubes - and the lights back after
+await N.page.evaluate(() => PW.blackout(3));
+const dark = await heard(N, () => PW.lit === 0 && PW.stage.hemi.intensity < 0.05);
+await N.page.screenshot({ path: path.join(out, 'mine-dark.png') });
+const back = dark && await N.page.waitForFunction(() => PW.lit === 1, { timeout: 15000, polling: 100 }).then(() => true, () => false);
+check('power cut goes dark and comes back', dark && back, `dark ${dark}, back ${back}`);
 
 for (const p of [A, B]) {
   const errs = p.logs.filter((l) => /error|warn/i.test(l));

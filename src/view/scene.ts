@@ -40,7 +40,8 @@ function skyDome(): THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial> {
 
 export class Stage {
   private sky: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
-  private hemi: THREE.HemisphereLight;
+  /** the light from everywhere; the mine turns it down in a power cut */
+  hemi: THREE.HemisphereLight;
   private fill: THREE.DirectionalLight;
   private rim: THREE.DirectionalLight;
   private pools: THREE.PointLight[] = [];
@@ -144,6 +145,35 @@ export class Stage {
     this.composer.addPass(new OutputPass());
 
     addEventListener('resize', () => this.resize());
+    // Dragged onto a screen with a different density: a resize does not
+    // always fire for that, and the old density would be drawn at forever.
+    const density = () => matchMedia(`(resolution: ${devicePixelRatio}dppx)`)
+      .addEventListener('change', () => { this.resize(); density(); }, { once: true });
+    density();
+  }
+
+  /**
+   * The most pixels a frame is drawn at, or null for all the screen has.
+   *
+   * The cost of a frame is per pixel - every one goes through the lighting,
+   * the bloom and the pass for what is in your hands - so a 4K monitor is four
+   * times a laptop's work on the same graphics chip. Over budget, the frame is
+   * drawn at the budget and scaled up to fill the window.
+   */
+  private budget: number | null = null;
+
+  setPixelBudget(px: number | null) {
+    this.budget = px;
+    this.resize();
+  }
+
+  /** pixels drawn per CSS pixel, right now */
+  get pixelRatio() { return this.renderer.getPixelRatio(); }
+
+  private ratio() {
+    const r = Math.min(devicePixelRatio, 2);
+    if (!this.budget) return r;
+    return Math.max(0.5, Math.min(r, Math.sqrt(this.budget / (innerWidth * innerHeight))));
   }
 
   /**
@@ -204,7 +234,10 @@ export class Stage {
   resize() {
     this.camera.aspect = innerWidth / innerHeight;
     this.camera.updateProjectionMatrix();
+    const r = this.ratio();
+    this.renderer.setPixelRatio(r);
     this.renderer.setSize(innerWidth, innerHeight);
+    this.composer.setPixelRatio(r);
     this.composer.setSize(innerWidth, innerHeight);
   }
 

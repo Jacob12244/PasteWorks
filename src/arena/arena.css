@@ -67,6 +67,13 @@
 }
 #arena .hint.on { opacity: 1; }
 
+#arena .perf {
+  display: none; position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%);
+  font: 11px var(--mono); color: var(--muted); white-space: nowrap;
+  padding: 3px 9px; background: rgba(8, 10, 12, .6); border-radius: 8px;
+}
+#arena .perf.on { display: block; }
+
 /* ---- the middle ---- */
 #arena .cross { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
 #arena .cross i {

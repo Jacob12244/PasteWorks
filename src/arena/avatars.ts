@@ -64,6 +64,8 @@ export class Avatar {
   private capLamp: THREE.Group | null = null;
   /** pushing a barrow, as of the last snapshot drawn */
   carrying = false;
+  /** hat lamp on, as of the last snapshot drawn - they can switch it off in the dark */
+  lampOn = true;
   /** facing, as drawn */
   yaw = 0;
   /** the light where they stand, from the level's probe; null above ground */
@@ -170,19 +172,51 @@ export class Avatar {
   lamp() {
     if (this.capLamp) return;
     const g = new THREE.Group();
-    const face = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.03, 10), new THREE.MeshBasicMaterial({ color: 0xfff6dc }));
+    const face = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.03, 10), LAMP_FACE);
     face.rotation.x = Math.PI / 2;
-    const beam = new THREE.Mesh(
-      new THREE.ConeGeometry(0.9, 6, 16, 1, true).translate(0, -3, 0).rotateX(Math.PI / 2),
-      new THREE.MeshBasicMaterial({
-        color: 0xfff1d0, transparent: true, opacity: 0.035, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-      }),
-    );
-    g.add(face, beam);
+    const beam = new THREE.Mesh(new THREE.ConeGeometry(0.9, 6, 16, 1, true).translate(0, -3, 0).rotateX(Math.PI / 2), BEAM);
+    beam.frustumCulled = false;
+    this.glare = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glareTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0,
+    }));
+    this.glare.position.z = -0.04;
+    this.glare.scale.setScalar(0.5);
+    g.add(face, beam, this.glare);
     g.position.set(0, 0.3, -0.16);
     this.head.add(g);
     this.capLamp = g;
   }
+
+  private glare: THREE.Sprite | null = null;
+
+  /** The lamp's glare, from where you stand: strongest looking straight into it, and in the dark. */
+  glareFrom(eye: THREE.Vector3, dark: number) {
+    if (!this.glare || !this.capLamp) return;
+    const m = this.glare.material as THREE.SpriteMaterial;
+    if (!this.alive || !this.lampOn) { m.opacity = 0; return; }
+    this.lampRay(_at, _dir);
+    const to = _to.copy(eye).sub(_at);
+    const d = to.length();
+    const facing = Math.max(0, to.dot(_dir) / Math.max(d, 1e-3));
+    const k = facing < 0.5 ? 0 : (facing - 0.5) / 0.5;
+    m.opacity = k * k * (0.25 + 0.75 * dark);
+    // a spot of light, not a thing: about the same size on screen near or far
+    this.glare.scale.setScalar(0.25 + d * 0.035);
+  }
+
+  /** Where the hat lamp is and which way it shines, in the world; false for no lamp, or one switched off. */
+  lampRay(at: THREE.Vector3, dir: THREE.Vector3): boolean {
+    if (!this.capLamp || !this.lampOn) return false;
+    this.capLamp.updateWorldMatrix(true, false);
+    const m = this.capLamp.matrixWorld;
+    dir.set(0, -0.12, -1).transformDirection(m);
+    // a hand in front of the face, so the light is not all spent on the hat it is on
+    at.setFromMatrixPosition(m).addScaledVector(dir, 0.3);
+    return true;
+  }
+
+  /** the name over their head: off in the dark, for the other crew, unless your lamp is on them */
+  tag = true;
 
   push(s: Snap) {
     const last = this.snaps[this.snaps.length - 1];
@@ -245,6 +279,8 @@ export class Avatar {
       this.arms[0].rotation.x = aim * 0.8;
       this.arms[1].rotation.x = s.w === 0 ? aim : aim * 0.55 + Math.sin(this.stride) * 0.1;
       this.carrying = !!(s.flags & F.carry);
+      this.lampOn = !(s.flags & F.dark);
+      if (this.capLamp) this.capLamp.visible = this.lampOn;
       this.yaw = s.yaw;
       if (this.carrying) {
         // both hands down and forward, on the handles
@@ -257,8 +293,8 @@ export class Avatar {
       this.head.rotation.x = s.pitch * 0.6;
       this.shield.visible = !!(s.flags & F.shield) && this.alive;
       if (this.shield.visible) (this.shield.material as THREE.MeshBasicMaterial).opacity = 0.08 + 0.06 * Math.sin(performance.now() / 90);
-      this.label.visible = this.alive;
     }
+    this.label.visible = this.alive && this.tag;
 
     // plastered: over backwards, and the colour drains out
     this.fall = Math.max(0, Math.min(1, this.fall + (this.alive ? -dt * 4 : dt * 3)));
@@ -314,6 +350,7 @@ export class Avatar {
       m.geometry?.dispose();
     });
     this.mats.forEach((m) => m.dispose());
+    (this.glare?.material as THREE.SpriteMaterial | undefined)?.dispose();
     const lm = this.label.material as THREE.SpriteMaterial;
     lm.map?.dispose();
     lm.dispose();
@@ -321,6 +358,60 @@ export class Avatar {
 }
 
 const GREY = new THREE.Color(0x5a5f66);
+
+/** every hat lamp's face */
+const LAMP_FACE = new THREE.MeshBasicMaterial({ color: 0xfff6dc });
+
+/**
+ * A hat lamp's beam in the dust: a cone, brightest at the lamp and gone by
+ * its far end, and soft at its edges - it shows most where you are looking
+ * through the thick of it. One paint for every beam, so the dark can
+ * thicken them all at once.
+ */
+const BEAM = new THREE.ShaderMaterial({
+  uniforms: { uColor: { value: new THREE.Color(0xfff1d0) }, uStrength: { value: 0.05 } },
+  vertexShader: /* glsl */ `
+    varying float vAlong;
+    varying vec3 vN;
+    varying vec3 vV;
+    void main() {
+      vAlong = clamp(-position.z / 6.0, 0.0, 1.0);
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vN = normalize(normalMatrix * normal);
+      vV = normalize(-mv.xyz);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: /* glsl */ `
+    uniform vec3 uColor;
+    uniform float uStrength;
+    varying float vAlong;
+    varying vec3 vN;
+    varying vec3 vV;
+    void main() {
+      float face = abs(dot(normalize(vN), normalize(vV)));
+      float fade = 1.0 - vAlong;
+      gl_FragColor = vec4(uColor * uStrength * face * face * fade * fade, 1.0);
+    }`,
+  transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+});
+
+/** the glare of a hat lamp looking at you: a soft white spot, drawn once */
+let glareMap: THREE.Texture | null = null;
+function glareTexture() {
+  if (glareMap) return glareMap;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  const r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  r.addColorStop(0, 'rgba(255,250,235,1)');
+  r.addColorStop(0.18, 'rgba(255,241,210,0.55)');
+  r.addColorStop(1, 'rgba(255,241,210,0)');
+  g.fillStyle = r;
+  g.fillRect(0, 0, 64, 64);
+  glareMap = new THREE.CanvasTexture(c);
+  glareMap.colorSpace = THREE.SRGBColorSpace;
+  return glareMap;
+}
 
 /** A name over their head, in their hat's colour. Hidden behind walls like anything else. */
 function nameTag(name: string, colour: number): THREE.Sprite {
@@ -394,4 +485,49 @@ export class Avatars {
     const T = serverNow - INTERP_MS;
     for (const a of this.byId.values()) a.update(T, dt);
   }
+
+  /**
+   * Other people's hat lamps as real lights, so their beams land on the rock
+   * and you see someone coming round a corner before you see them. Only the
+   * nearest few: every light is paid for on every pixel. They are there from
+   * the start and dark when unused, so nobody walking into range makes every
+   * shader in the level rebuild.
+   */
+  private spots: THREE.SpotLight[] = [];
+  beams(parent: THREE.Object3D, n: number) {
+    for (let i = 0; i < n; i++) {
+      const s = new THREE.SpotLight(0xfff1dc, 0, 26, 0.55, 0.95, 1.6);
+      parent.add(s, s.target);
+      this.spots.push(s);
+    }
+  }
+
+  /** How dark it is, 0 to 1: the beams thicken and the glare of a lamp grows with it. */
+  haze = 0;
+
+  /** Hand the lights to whoever's lamps are nearest `eye`, and turn every lamp's glare to it. */
+  aim(eye: THREE.Vector3) {
+    BEAM.uniforms.uStrength.value = 0.05 + 0.1 * this.haze;
+    for (const a of this.byId.values()) a.glareFrom(eye, this.haze);
+    if (!this.spots.length) return;
+    const near = [...this.byId.values()]
+      .filter((a) => a.alive && a.lampOn)
+      .map((a) => ({ a, d: a.position.distanceToSquared(eye) }))
+      .filter((x) => x.d < 40 * 40)
+      .sort((p, q) => p.d - q.d);
+    this.spots.forEach((s, i) => {
+      const a = near[i]?.a;
+      if (a && a.lampRay(s.position, _dir)) {
+        s.target.position.copy(s.position).add(_dir);
+        s.target.updateMatrixWorld();
+        s.intensity = 9;
+      } else {
+        s.intensity = 0;
+      }
+    });
+  }
 }
+
+const _dir = new THREE.Vector3();
+const _at = new THREE.Vector3();
+const _to = new THREE.Vector3();

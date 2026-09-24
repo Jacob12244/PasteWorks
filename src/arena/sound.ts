@@ -140,6 +140,35 @@ export class Sfx {
     this.tone(0.9, 415, 415, 0.1, 'sawtooth', 0.1);
   }
 
+  /** the switch on a cap lamp */
+  click() {
+    if (!this.ok) return;
+    this.tone(0.025, 2100, 1700, 0.12, 'square');
+    this.hiss(0.03, 4000, 2, 0.08, 'highpass');
+  }
+
+  /** the tubes stuttering: a crackle and a catch of mains hum */
+  flicker() {
+    if (!this.ok) return;
+    this.hiss(0.05, 3200, 3, 0.1, 'bandpass');
+    this.tone(0.07, 100, 100, 0.05, 'sawtooth');
+  }
+
+  /** the mains trips: a contactor slamming out, and the fans running down */
+  powerDown() {
+    if (!this.ok) return;
+    this.tone(0.3, 95, 38, 0.5, 'sine');
+    this.hiss(0.2, 1600, 1, 0.3, 'lowpass', 0.2);
+    this.tone(4, 118, 22, 0.1, 'sawtooth', 0.05);
+  }
+
+  /** back on: a clunk, and the fans spinning up */
+  powerUp() {
+    if (!this.ok) return;
+    this.tone(0.2, 75, 50, 0.35, 'sine');
+    this.tone(2.4, 28, 118, 0.07, 'sawtooth', 0.15);
+  }
+
   /** the site horn: a round starts or ends */
   horn() {
     if (!this.ok) return;

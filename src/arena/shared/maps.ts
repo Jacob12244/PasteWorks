@@ -1,4 +1,4 @@
-import { ROUND_S, type Condition } from './rules';
+import { ROUND_S, POWER_CUTS, type Condition, type PowerCuts } from './rules';
 import * as plant from './map';
 import * as mine from './mine';
 import type { Pickup } from './map';
@@ -38,6 +38,8 @@ export interface MapDef {
   fall: number;
   /** the barrow game's two ends: Day, then Night */
   bases?: [Base, Base];
+  /** somewhere with lights to lose */
+  power?: PowerCuts;
   /** server/worlds/<world>.bin.gz */
   world: string;
 }
@@ -75,6 +77,7 @@ export const MAPS: Record<MapId, MapDef> = {
     round: 420,
     fall: -20,
     bases: mine.BASES,
+    power: POWER_CUTS,
     world: 'mine',
   },
 };

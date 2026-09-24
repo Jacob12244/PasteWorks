@@ -16,6 +16,7 @@ import { ArenaHud, type Row } from './hud';
 import { Sfx } from './sound';
 import { socket, local, saveToken, type Conn } from './net';
 import { Mine } from './mine/build';
+import { mains } from './mine/light';
 import { Barrows } from './barrows';
 import { Minimap, type MapView } from './minimap';
 import { MAPS, type MapId } from './shared/maps';
@@ -49,6 +50,13 @@ import { segBody } from './shared/physics';
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/**
+ * The most pixels a frame is drawn at: a laptop's screen, 1920 x 1200. A
+ * bigger screen draws this many and scales them up, rather than asking the
+ * same graphics chip for four times the work. ?res=full lifts it.
+ */
+const PIXELS = 1920 * 1200;
 
 /** Where the fight is: what the collision world is taken from, and what runs every frame. */
 interface Venue {
@@ -135,14 +143,20 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
   stage.onFoot(true);
   stage.camera.near = 0.08;
   stage.setFov(75);
+  const query = new URLSearchParams(location.search);
+  if (query.get('res') !== 'full') stage.setPixelBudget(PIXELS);
 
+  // the lamp on your own hat: the one real light underground, bar everyone else's
+  let capLight: THREE.SpotLight | null = null;
   if (teams) {
-    // the lamp on your own hat: the one real light underground
     const cap = new THREE.SpotLight(0xfff1dc, 9, 30, 0.62, 0.95, 1.6);
     cap.position.set(0.12, 0.08, 0);
     cap.target.position.set(0, -0.12, -1);
     stage.camera.add(cap, cap.target);
     stage.scene.add(stage.camera);
+    capLight = cap;
+    // two more: each is paid for on every pixel, and the nearest two are the ones that matter
+    avatars.beams(stage.scene, 2);
   }
 
   const walker = new Walker(stage.camera, canvas, FEEL.earth);
@@ -180,6 +194,13 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
   let ts: [number, number] = [0, 0];
   let carrying = false;
   const heard = new Map<number, number>();
+  /** the mine's mains: the power cut the server last told us of (off at, back at, server ms), and what it is giving now */
+  let cut: [number, number] = [0, 0];
+  let lit = 1;
+  let wasOut = false;
+  let crackleAt = 0;
+  /** your own cap lamp, on or off */
+  let lamp = true;
 
   const serverNow = () => performance.now() + (offset ?? 0);
   const shown = (w: WeaponId) => Math.max(0, ammo[w] - pending.filter((p) => p.w === w).length);
@@ -278,6 +299,7 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
     hits.length = 0;
     me.id = 0;
     offset = null;
+    cut = [0, 0];
     setCarrying(false);
   }
 
@@ -354,8 +376,29 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
     const run = Math.hypot(v.x, v.z) > FEEL.earth.walk + 0.5;
     conn.send({
       t: 's', p: [r2(f.x), r2(f.y), r2(f.z)], a: [r3(walker.yawAngle), r3(walker.pitchAngle)], w: weapon,
-      f: (walker.grounded ? F.floor : 0) | (run ? F.run : 0) | (walker.paused ? F.away : 0), l: me.life,
+      f: (walker.grounded ? F.floor : 0) | (run ? F.run : 0) | (walker.paused ? F.away : 0) | (lamp ? 0 : F.dark), l: me.life,
     });
+  }
+
+  /**
+   * L: the lamp on your hat. Off, nobody sees you coming - and you see next
+   * to nothing. Never off with the barrow in your hands, and always back on
+   * at the start of a new life.
+   */
+  function setLamp(on: boolean, say = true) {
+    if (!capLight) return;
+    if (!on && carrying) {
+      if (say) hud.toast('Your lamp stays on while you have the barrow');
+      return;
+    }
+    if (on === lamp) return;
+    lamp = on;
+    capLight.intensity = on ? 9 : 0;
+    if (say) {
+      sfx.click();
+      hud.toast(on ? 'Cap lamp on' : 'Cap lamp off - L to switch it back on');
+    }
+    sendState();
   }
 
   /**
@@ -371,7 +414,10 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
   function setCarrying(on: boolean) {
     carrying = on;
     vm.carry(on ? me.team : -1);
-    if (on) lmb = false;
+    if (on) {
+      lmb = false;
+      setLamp(true, false);
+    }
   }
 
   /** The server moved a barrow. Say so, in proportion. */
@@ -440,6 +486,7 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
       const f = walker.feet;
       if (Math.hypot(f.x - at.x, f.z - at.z) <= BARROW.reach) return '<kbd>E</kbd> take the barrow';
     }
+    if (!lamp) return '<em>Cap lamp off</em> &middot; <kbd>L</kbd> switch it on';
     return null;
   }
 
@@ -466,6 +513,7 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
           barrows.set(1, m.bar[1]);
         }
         ts = m.ts ?? [0, 0];
+        cut = m.out ?? [0, 0];
         mine?.setPoured(1, ts[0], true);
         mine?.setPoured(0, ts[1], true);
         applyRound(m.round, false);
@@ -573,6 +621,7 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
           hud.up();
           walker.teleport(V(...m.p), m.y);
           vm.visible = true;
+          setLamp(true, false);
         } else {
           avatars.get(m.id)?.teleport(m.p[0], m.p[1], m.p[2], m.y);
         }
@@ -594,6 +643,9 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
         break;
       case 'B':
         onBarrow(m);
+        break;
+      case 'O':
+        cut = [m.at, m.end];
         break;
       case 'fix':
         walker.moveTo(V(...m.p));
@@ -712,9 +764,16 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
       case 'KeyE':
         if (!walker.paused && !e.repeat) grab();
         break;
+      case 'KeyL':
+        if (!walker.paused && !e.repeat && me.alive) setLamp(!lamp);
+        break;
       case 'KeyM':
         sfx.muted = !sfx.muted;
         hud.toast(sfx.muted ? 'Sound off' : 'Sound on');
+        break;
+      case 'Backquote':
+        perf.on = !perf.on;
+        if (!perf.on) hud.perf(null);
         break;
     }
   });
@@ -734,8 +793,65 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
   const _look = new THREE.Matrix4();
   const _q = new THREE.Quaternion();
   const _light = new THREE.Color();
+  const _fwd = V(), _to = V();
   const probe = mine?.probe ?? null;
-  const lightAt = probe ? (x: number, z: number, out: THREE.Color) => probe.at(x, z, out) : undefined;
+  // the level's light where something stands - as much of it as the mains is giving
+  const lightAt = probe ? (x: number, z: number, out: THREE.Color) => probe.at(x, z, out).multiplyScalar(lit) : undefined;
+
+  /**
+   * The mains, every frame. The server only says when; the flicker, the dark
+   * and the strike back up are all worked from its clock, so every page goes
+   * dark together.
+   */
+  function lights(sNow: number) {
+    if (!mine) return;
+    const k = mains(sNow, cut[0], cut[1], map.power?.warn ?? 0);
+    const now = performance.now();
+    if (k > 0 && k < 1 && lit === 1 && now > crackleAt) {
+      sfx.flicker();
+      crackleAt = now + 110;
+    }
+    lit = k;
+    mine.power(k, stage);
+    avatars.haze = 1 - k;
+    const out = sNow >= cut[0] && sNow < cut[1];
+    if (out !== wasOut) {
+      wasOut = out;
+      if (out) {
+        sfx.powerDown();
+        hud.banner(`POWER'S OUT<small>cap lamps only, until it comes back &middot; <kbd>L</kbd> switches yours off</small>`, '#ffd27a', 3200);
+      } else {
+        sfx.powerUp();
+        hud.toast('Power back on');
+      }
+    }
+    // In the dark, the other crew's names only show where your own lamp is on them.
+    const cam = stage.camera;
+    cam.getWorldDirection(_fwd);
+    for (const a of avatars.all()) {
+      let tag = true;
+      if (k < 0.5 && a.team !== me.team) {
+        _to.copy(a.position).setY(a.position.y + 1.4).sub(cam.position);
+        const d = _to.length();
+        tag = lamp && d < 18 && _to.dot(_fwd) > d * 0.8;
+      }
+      a.tag = tag;
+    }
+  }
+
+  /** ` : the frame rate, and how many pixels it is drawn at against how many the screen has */
+  const perf = { on: query.has('fps'), frames: 0, since: performance.now() };
+  const _size = new THREE.Vector2();
+  function perfTick(now: number) {
+    perf.frames++;
+    if (!perf.on || now - perf.since < 500) return;
+    const fps = (perf.frames * 1000) / (now - perf.since);
+    perf.frames = 0;
+    perf.since = now;
+    stage.renderer.getDrawingBufferSize(_size);
+    const sw = Math.round(innerWidth * devicePixelRatio), sh = Math.round(innerHeight * devicePixelRatio);
+    hud.perf(`${fps.toFixed(0)} fps · drawn ${_size.x}×${_size.y} · screen ${sw}×${sh}`);
+  }
 
   /** Plastered: rise up out of yourself and look at whoever did it. */
   function deathCam(dt: number) {
@@ -789,7 +905,9 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
     else deathCam(dt);
 
     const sNow = serverNow();
+    lights(sNow);
     avatars.update(sNow, dt);
+    if (teams) avatars.aim(stage.camera.position);
     if (lightAt) for (const a of avatars.all()) a.light = lightAt(a.position.x, a.position.z, a.light ?? new THREE.Color());
     const drawn = sNow - INTERP_MS;
     for (let i = hits.length - 1; i >= 0; i--) {
@@ -810,7 +928,8 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
     const v = walker.velocity;
     if (lightAt) {
       const c = lightAt(stage.camera.position.x, stage.camera.position.z, _light);
-      vm.shade(Math.min(1, 0.3 + (c.r + c.g + c.b) / 3 * 0.9));
+      // your own lamp spills on your hands; switched off, they go as dark as everything else
+      vm.shade(Math.min(1, (lamp ? 0.3 : 0.04) + (c.r + c.g + c.b) / 3 * 0.9));
     }
     vm.update(stage.camera, dt, Math.hypot(v.x, v.z), walker.grounded, walker.yawAngle, walker.pitchAngle);
     if (lmb) fire(weapon);
@@ -824,6 +943,7 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
     hud.tick(sNow);
     hud.downTick(now);
     stage.render();
+    perfTick(now);
   }
 
   refreshAmmo();
@@ -843,6 +963,16 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
     get roster() { return roster; },
     get carrying() { return carrying; },
     get ts() { return ts; },
+    /** what the mains is giving right now, 0 to 1 */
+    get lit() { return lit; },
+    get cut() { return cut; },
+    get lamp() { return lamp; },
+    setLamp,
+    /** a power cut on this page only, `secs` long after the flicker - for looking at the dark */
+    blackout(secs = 20) {
+      const warn = (map.power?.warn ?? 0) * 1000;
+      cut = [serverNow() + warn, serverNow() + warn + secs * 1000];
+    },
     fire, setWeapon, practise, grab,
   };
 }
