@@ -23,7 +23,10 @@ const direct = scenarioById(params.get('s'));
 
 // Paste Wars is a page of its own, loaded only by the people who ask for it:
 // ?arena for the plant, ?arena=mine for the 760 Level, bake or bake-mine for tools/bake.mjs.
-if (params.has('arena')) {
+// So is the sizing game, at ?size.
+if (params.has('size')) {
+  import('./sizing/game').then((m) => m.startSizing(params.get('size')));
+} else if (params.has('arena')) {
   const a = params.get('arena') ?? '';
   import('./arena/arena').then((m) => m.startArena(a.startsWith('bake') ? 'bake' : 'play', a.endsWith('mine') ? 'mine' : 'plant'));
 } else if (direct) {

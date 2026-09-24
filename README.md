@@ -706,7 +706,58 @@ Day push its barrow the length of the level into Night's stope, has Night
 switch its lamp off and Day see it go out, then turns the lights off on one
 of them.
 
+## Size the plant
+
+[`/?size`](#size-the-plant), or **Size the plant** under Paste Wars on the title
+screen, is the plant before there is a plant. A contract sets the job: a tonnage
+of run-of-mine ore, what the blast brought (top size and x50), how hard it is to
+grind (Bond Wi) and how hard on steel (Ai), the grind the flotation plant wants
+and the density it wants it at. You build the circuit that makes it, one station
+at a time, with sliders, and every number that comes back is ProcessPro's.
+
+| Station | Sliders | Has to |
+| --- | --- | --- |
+| 1 Primary | grizzly bar spacing, jaw size, setting | take the blast's biggest rock (0.8 of the gape) and keep up with its feed |
+| 2 Secondary | cone size, setting | take the jaw's biggest pieces and keep up |
+| 3 Tertiary | screen aperture, size and number; tertiary cone size and setting | screens carry their undersize (Karra); the cone takes and keeps up with the circulating load |
+| 4 Mill | diameter, length, ball filling, mill solids | break what it is fed; stay between 1 and 2 diameters long |
+| 5 Cyclones | diameter, number, feed solids, underflow solids | make the grind; hit the flotation feed density; not rope |
+
+It is ProcessPro's "Crushing and grinding circuit" example with the numbers
+pulled out: Whiten on the crushers, efficiency curves on the screens, Austin's
+population balance in the mill, the Krebs method on the cyclones, and the
+equipment ratings (`rating.ts`) added to ProcessPro for this game - jaw and cone
+capacity and largest lump from the makers' published tables, Karra's screen
+capacity, Bond's mill power. Every slider move solves the whole circuit in a
+worker (about 30 ms), and the machine it belongs to is rebuilt at its new size as
+you drag. The mill's shell opens on its station to show the ball charge at J.
+Stations you have not reached yet stand as blueprints. A closed grinding circuit
+whose mill cannot break what comes back to it has no steady state, and the game
+says so rather than showing numbers the solve gave up on.
+
+When every station is green, **Commission** records the plant's capital and
+operating cost against the contract number, in this browser, ranked on ten years
+of owning it (capital plus ten years of operating cost). The same number is the
+same contract for everyone: `?size=4821`. Capital is the US Bureau of Mines'
+installed-cost curves (IC 9143 for the crushing and grinding circuits, IC 9170
+for screens), each machine priced on the tonnage it is rated for, so an oversized
+machine costs more; the split of a circuit's cost between its machines, the 2026
+escalation and the steel prices are this game's assumptions, and `costs.ts` says
+which is which. Running cost is power at the US industrial average and the steel
+the machines wear, by Bond's metal wear relations.
+
+The engine is ProcessPro's, installed from GitHub Packages as
+`@jacob12244/proc-engine`. To work on the engine and the game together, point
+`PROC_SRC` at a ProcessPro checkout and Vite reads the engine's source instead
+of the package (`PROC_SRC=../ProcessPro npm run dev`); the typecheck and
+`verify:sizing` still use the package. The backfill plant joins the end of the
+line in the next phase (the sixth, locked step).
+
 ## Running it
+
+`npm install` needs `NPM_TOKEN` in the environment, a classic GitHub token with
+`read:packages`, for the sizing game's engine (see `.npmrc`). Setting it at the
+user level does not change a shell that is already open.
 
 ```bash
 npm install
@@ -720,6 +771,7 @@ npm run typecheck
 npm run verify     # the five physics harnesses, outside the browser
 npm run bake       # re-bake both arenas' collision worlds after changing anything in either
 npm run verify:arena
+npm run verify:sizing   # ProcessPro's crushing example rebuilt, then 50 contracts closed by a plain designer
 ```
 
 **Controls** — pick a world, watch or skip the opening, and it sits you in the

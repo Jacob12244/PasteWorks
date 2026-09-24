@@ -9,8 +9,11 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci
+# npm ci installs the whole lock, the sizing game's engine from GitHub Packages
+# with it, so the arena takes the same registry token as the web build, as a
+# build secret that never lands in a layer.
+COPY package.json package-lock.json .npmrc ./
+RUN --mount=type=secret,id=npm_token,env=NPM_TOKEN npm ci
 
 COPY tsconfig.json ./
 COPY src/ src/

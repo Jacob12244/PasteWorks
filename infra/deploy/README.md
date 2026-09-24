@@ -76,7 +76,9 @@ Images are built off the server and pushed to the GitHub Container Registry by
 `build-push.ps1` on a workstation. The server only pulls: on-server builds peg
 this shared-CPU VPS hard enough to trip the host's abuse detection.
 
-On a workstation, once per release:
+On a workstation, once per release. Both images install the sizing game's
+engine from GitHub Packages, so `NPM_TOKEN`, a token with `read:packages`, has
+to be in the environment; `build-push.ps1` hands it to the build as a secret.
 
 ```powershell
 cd infra\deploy

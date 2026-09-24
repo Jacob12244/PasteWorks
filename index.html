@@ -653,6 +653,28 @@
     .wl-arena { grid-template-columns: minmax(0, 1fr); padding: 14px; }
     .wl-arena svg { display: none; }
   }
+  /* Size the plant: the same strip in cyan, one link rather than doors */
+  .wl-arena.wl-size {
+    margin-top: 0; grid-template-columns: auto auto minmax(0, 1fr) auto; text-decoration: none;
+    background: linear-gradient(90deg, rgba(53,224,208,.12), rgba(10,15,23,.86) 40%);
+    border-color: rgba(53,224,208,.3);
+    transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
+  }
+  .wl-arena.wl-size:hover, .wl-arena.wl-size:focus-visible {
+    transform: translateY(-3px); border-color: var(--cyan); outline: none;
+    box-shadow: 0 16px 40px rgba(0,0,0,.55), 0 0 0 1px var(--cyan), 0 0 30px -8px var(--cyan);
+  }
+  .wl-size .wa-name em, .wl-arena.wl-size:hover .wa-go { color: var(--cyan); }
+  .wl-size .wa-go { grid-column: auto; margin-top: 0; padding-right: 8px; }
+  @media (max-width: 1100px) {
+    .wl-arena.wl-size { grid-template-columns: minmax(0, 1fr) auto; }
+    .wl-size .wa-name, .wl-size .wa-text { grid-column: 1; }
+    .wl-size .wa-go { grid-column: 2; grid-row: 1 / 3; }
+  }
+  @media (max-width: 640px) {
+    .wl-arena.wl-size { grid-template-columns: minmax(0, 1fr); }
+    .wl-size .wa-go { grid-column: 1; grid-row: auto; }
+  }
   #welcome footer {
     position: relative; display: flex; flex-wrap: wrap; justify-content: center;
     align-items: center; gap: 22px; font-size: 12px; color: var(--muted);

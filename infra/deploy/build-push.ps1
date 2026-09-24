@@ -6,11 +6,16 @@
 #   .\build-push.ps1 -Only arena  just one of them
 #
 # One-time setup: a classic GitHub token with write:packages and read:packages,
-# then "docker login ghcr.io -u Jacob12244". Unlike ProcessPro there is no
-# private npm package here, so no NPM_TOKEN is needed.
+# then "docker login ghcr.io -u Jacob12244". Both builds also install the sizing
+# game's engine from GitHub Packages, so NPM_TOKEN (a token with read:packages)
+# has to be in your environment; it goes in as a build secret.
 param([ValidateSet('web', 'arena')][string]$Only)
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $env:NPM_TOKEN) {
+    throw 'NPM_TOKEN is not set. It needs read:packages, for the engine on GitHub Packages - see the repo README.'
+}
 
 $registry = 'ghcr.io/jacob12244'
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
@@ -26,6 +31,7 @@ foreach ($name in $targets) {
     $image = "$registry/pasteworks-$name"
     Write-Host "==> building $image ($shaTag)" -ForegroundColor Cyan
     & docker build -f (Join-Path $PSScriptRoot "$name\Dockerfile") `
+        --secret id=npm_token,env=NPM_TOKEN `
         -t "${image}:latest" -t "${image}:$shaTag" "$repoRoot"
     if ($LASTEXITCODE -ne 0) { throw "docker build failed ($name)" }
 

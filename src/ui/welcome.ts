@@ -162,6 +162,7 @@ export class Welcome {
     for (const s of scenarios) row.append(this.card(s));
     this.root.append(row);
     this.root.append(this.arena());
+    this.root.append(this.sizing());
 
     const foot = el('footer');
     const intro = el('label', 'wl-intro');
@@ -202,6 +203,30 @@ export class Welcome {
     c.append(body);
     c.onclick = () => this.pick(s);
     return c;
+  }
+
+  /** The sizing game: a strip like Paste Wars', for building the crushing and grinding circuit to a contract. */
+  private sizing() {
+    const a = el('a', 'wl-arena wl-size') as HTMLAnchorElement;
+    a.href = '?size';
+    a.innerHTML = `
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="4" y="22" width="32" height="3" rx="1.5" fill="#35e0d0"/>
+        <circle cx="12" cy="23.5" r="5" fill="none" stroke="#35e0d0" stroke-width="2.4"/>
+        <rect x="21" y="10" width="11" height="12" rx="2" fill="none" stroke="#35e0d0" stroke-width="2.4"/>
+        <rect x="4" y="31" width="32" height="2.4" rx="1.2" fill="#35e0d0" opacity=".5"/>
+      </svg>
+      <span class="wa-name"><em>Before the plant</em><b>SIZE THE PLANT</b></span>
+      <span class="wa-text">A contract, an ore and a grind to hit. Size every crusher, screen, mill and
+        cyclone with sliders, on ProcessPro's own models, as cheaply as you can.</span>
+      <span class="wa-go">Take the job&nbsp;&nbsp;&#9656;</span>`;
+    a.onclick = (e) => {
+      e.preventDefault();
+      this.root.classList.add('leaving');
+      this.running = false;
+      setTimeout(() => { location.href = a.href; }, 420);
+    };
+    return a;
   }
 
   /**

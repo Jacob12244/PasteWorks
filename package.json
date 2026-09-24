@@ -14,6 +14,7 @@
     "verify:solve": "esbuild tools/solve.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/solve.mjs --log-level=error && node node_modules/.cache/solve.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p server",
     "verify:hard": "esbuild tools/hardmode.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/hm.mjs --log-level=error && node node_modules/.cache/hm.mjs",
+    "verify:sizing": "esbuild tools/sizing.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/sizing.mjs --log-level=error && node node_modules/.cache/sizing.mjs",
     "verify:worlds": "esbuild tools/worlds.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/worlds.mjs --log-level=error && node node_modules/.cache/worlds.mjs --quick",
     "solve:worlds": "esbuild tools/worlds.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/worlds.mjs --log-level=error && node node_modules/.cache/worlds.mjs",
     "arena:build": "esbuild server/main.ts --bundle --platform=node --format=cjs --target=node18 --outfile=server/dist/arena.cjs --external:bufferutil --external:utf-8-validate --log-level=warning",
@@ -23,6 +24,7 @@
     "verify:arena": "esbuild tools/arenamap.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/arenamap.mjs --log-level=error && node node_modules/.cache/arenamap.mjs && npm run arena:build && node tools/arena.mjs"
   },
   "dependencies": {
+    "@jacob12244/proc-engine": "^0.1.0",
     "three": "^0.169.0",
     "ws": "^8.21.3"
   },
