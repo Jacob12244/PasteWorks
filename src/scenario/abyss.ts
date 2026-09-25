@@ -38,7 +38,8 @@ export const ABYSS: Scenario = {
         + 'millimetres every million.',
     },
     {
-      from: [60, 14, 60, 110, 2, 0], to: [90, 10, 44, 150, 0, 0], ms: 8000,
+      // one of them is still out there, at the end of its own tracks
+      from: [150, 11, 130, 205, 2, 124], to: [174, 6, 121, 206, 2, 127], ms: 8000,
       text: 'The first collectors scraped them up and left a sediment plume that '
         + 'drifted four hundred kilometres. The regulator shut the lot down inside '
         + 'a year.',

@@ -4,6 +4,7 @@
  * outside, throwing cured slugs of tailings off the asteroid.
  */
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Telemetry } from '../../sim/plant';
 import { DESIGN } from '../../sim/plant';
 import type { Names } from '../../scenario';
@@ -34,44 +35,7 @@ export const PIT_HOLE: [number, number, number, number] = [
 /** Pelletiser house, where the paste line ends. */
 const PELLET = { x: 46, w: 10 };
 
-// ---------------------------------------------------------------- the sky
-
-function starfield(): THREE.Points {
-  const r = rng(11);
-  const n = 4200;
-  const pos = new Float32Array(n * 3);
-  const col = new Float32Array(n * 3);
-  const c = new THREE.Color();
-  // Mostly uniform, plus a band along a tilted great circle for the galaxy.
-  const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.9, 0.3, 0.5));
-  for (let i = 0; i < n; i++) {
-    const v = new THREE.Vector3();
-    if (i < n * 0.45) {
-      const a = r() * Math.PI * 2;
-      const spread = (r() + r() + r() - 1.5) * 0.16;
-      v.set(Math.cos(a), spread, Math.sin(a)).normalize().applyQuaternion(tilt);
-    } else {
-      v.set(r() * 2 - 1, r() * 2 - 1, r() * 2 - 1).normalize();
-    }
-    v.multiplyScalar(820);
-    pos.set([v.x, v.y, v.z], i * 3);
-    const k = r();
-    c.setHSL(k < 0.2 ? 0.58 : k < 0.3 ? 0.08 : 0.12, k < 0.3 ? 0.55 : 0.1, 0.55 + r() * 0.4);
-    col.set([c.r, c.g, c.b], i * 3);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  // No twinkle. There is no air here to make them twinkle.
-  const m = new THREE.PointsMaterial({
-    size: 1.6, sizeAttenuation: false, vertexColors: true,
-    transparent: true, opacity: 0.95, depthWrite: false, fog: false,
-  });
-  const p = new THREE.Points(g, m);
-  p.frustumCulled = false;
-  p.renderOrder = -1;
-  return p;
-}
+// ------------------------------------------------------------ in the sky
 
 function glowSprite(colour: string, size: number, core = 0.12): THREE.Sprite {
   const tex = canvasTexture(128, 128, (g, W, H) => {
@@ -144,52 +108,6 @@ function dome(): THREE.Group {
   g.add(foot);
 
   g.position.set(-45, 0, 6);
-  return g;
-}
-
-/** Craters and boulders: metal-rich regolith, battered for four billion years. */
-function regolith(): THREE.Group {
-  const g = new THREE.Group();
-  const r = rng(23);
-  const keep = (x: number, z: number) =>
-    // stay off the dome footprint and the rail corridor
-    ((x + 45) / 112) ** 2 + ((z - 6) / 64) ** 2 > 1 && !(x > 40 && x < 240 && Math.abs(z) < 16)
-    && !(x > -275 && x < -150 && z > -45 && z < 45);
-
-  const rimMat = matte(0x39383a, 0.9);
-  const floorMat = matte(0x1d1c1e, 1);
-  for (let i = 0; i < 70; i++) {
-    const x = (r() - 0.5) * 900, z = (r() - 0.5) * 900;
-    if (!keep(x, z)) continue;
-    const rad = 3 + r() ** 2 * 22;
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(rad, rad * 0.12, 6, 28), rimMat);
-    rim.rotation.x = Math.PI / 2;
-    rim.scale.z = 0.5;
-    rim.position.set(x, -0.35, z);
-    g.add(rim);
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(rad * 0.95, 24), floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set(x, -0.37, z);
-    g.add(floor);
-  }
-  const rockGeo = new THREE.DodecahedronGeometry(1, 0);
-  const rockMat = metal(0x4a4846, 0.55, 0.6);
-  const rocks = new THREE.InstancedMesh(rockGeo, rockMat, 260);
-  rocks.userData.solid = true;
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  let n = 0;
-  for (let i = 0; i < 600 && n < 260; i++) {
-    const x = (r() - 0.5) * 700, z = (r() - 0.5) * 700;
-    if (!keep(x, z)) continue;
-    const s = 0.4 + r() ** 3 * 5;
-    q.setFromEuler(new THREE.Euler(r() * 3, r() * 3, r() * 3));
-    m.compose(new THREE.Vector3(x, -0.4 + s * 0.4, z), q, new THREE.Vector3(s, s * 0.7, s));
-    rocks.setMatrixAt(n++, m);
-  }
-  rocks.count = n;
-  rocks.castShadow = true;
-  g.add(rocks);
   return g;
 }
 
@@ -476,21 +394,41 @@ function frame(outer: number, inner: number, y: number, mat: THREE.Material): TH
 interface Truck { g: THREE.Group; k: number; v: number }
 
 /**
+ * A bench's four walls, facing in, with no lid: a closed box casts its lid
+ * into the shadow map and puts the whole pit in the dark.
+ */
+function benchWalls(hs: number, h: number): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 4; i++) {
+    const p = new THREE.PlaneGeometry(hs * 2, h);
+    p.translate(0, 0, -hs);
+    p.rotateY((i * Math.PI) / 2);
+    parts.push(p);
+  }
+  return mergeGeometries(parts);
+}
+
+/**
  * The pit, benched down into the metal, with an excavator on the floor and
  * autonomous trucks running ore to an airlock in the dome wall.
  */
 function pit(root: THREE.Group): { trucks: Truck[]; a: THREE.Vector3; b: THREE.Vector3 } {
   const g = new THREE.Group();
-  const floor = metal(0x3a3836, 0.6, 0.55);
-  const wall = new THREE.MeshStandardMaterial({ color: 0x2c2b2d, roughness: 0.8, metalness: 0.5, side: THREE.BackSide });
+  // cut faces of metal-rich rock, dusty on the benches
+  const floor = metal(0x5f5c57, 0.8, 0.3);
+  const wall = new THREE.MeshStandardMaterial({ color: 0x6a6660, roughness: 0.7, metalness: 0.45 });
   for (let i = 0; i < PIT.benches; i++) {
     const hs = PIT.half - i * PIT.step;
     const y0 = -0.4 - i * PIT.bench;
-    const w = new THREE.Mesh(new THREE.BoxGeometry(hs * 2, PIT.bench, hs * 2, 1, 1, 1), wall);
+    const w = new THREE.Mesh(benchWalls(hs, PIT.bench), wall);
     w.position.y = y0 - PIT.bench / 2;
+    // each bench's wall shades the one below it: at a low sun, that is what shows the benches
+    w.castShadow = w.receiveShadow = true;
     g.add(w);
     const next = i < PIT.benches - 1 ? hs - PIT.step : 0;
-    g.add(frame(hs, next, y0 - PIT.bench + 0.01, floor));
+    const fl = frame(hs, next, y0 - PIT.bench + 0.01, floor);
+    fl.receiveShadow = true;
+    g.add(fl);
     const edge = strip(hs * 2, C.amber, 0.06, 1.0);
     edge.position.set(0, y0 + 0.05, hs);
     g.add(edge);
@@ -523,7 +461,7 @@ function pit(root: THREE.Group): { trucks: Truck[]; a: THREE.Vector3; b: THREE.V
   // a haul road, and the trucks on it
   const a = new THREE.Vector3(PIT.x + PIT.half + 2, 0, PIT.z + 6);
   const b = new THREE.Vector3(-159, 0, 10);
-  const road = new THREE.Mesh(new THREE.PlaneGeometry(a.distanceTo(b), 8), matte(0x2f2e30, 1));
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(a.distanceTo(b), 8), matte(0x55534f, 1));
   road.rotation.x = -Math.PI / 2;
   road.rotation.z = -Math.atan2(b.z - a.z, b.x - a.x);
   road.position.copy(a).lerp(b, 0.5).setY(-0.36);
@@ -557,17 +495,13 @@ function pit(root: THREE.Group): { trucks: Truck[]; a: THREE.Vector3; b: THREE.V
 
 // ------------------------------------------------------------------ build
 
-export function buildSpace(root: THREE.Group, key: THREE.DirectionalLight): Dressing {
-  root.add(starfield());
+/**
+ * The dome, the pit and its trucks, and Kiln Station in the sky: the site.
+ * The ground, the sky and the sun are asteroid.ts, which calls this.
+ */
+export function buildSpace(root: THREE.Group): Dressing & { trucks: THREE.Object3D[] } {
   root.add(dome());
-  root.add(regolith());
   const haul = pit(root);
-
-  // the sun, where the key light is coming from
-  const sunDir = key.position.clone().normalize();
-  const sun = glowSprite('rgb(255,236,200)', 150, 0.08);
-  sun.position.copy(sunDir).multiplyScalar(780);
-  root.add(sun);
 
   // Kiln Station, the catcher, a moving point far down the rail's line of fire
   const station = glowSprite('rgb(160,220,255)', 16, 0.2);
@@ -586,6 +520,8 @@ export function buildSpace(root: THREE.Group, key: THREE.DirectionalLight): Dres
   root.add(frost.object);
 
   return {
+    // the ground under them throws dust, and asteroid.ts wants to know where
+    trucks: haul.trucks.map((tr) => tr.g),
     update(t, dt, time) {
       frost.update(t, dt);
       const live = t.status !== 'idle' && t.status !== 'blocked';

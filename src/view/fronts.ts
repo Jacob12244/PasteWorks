@@ -101,14 +101,7 @@ export class CollectorFront extends Unit {
     const g = this.group;
     void fx;
 
-    // ---- worked strips on the plain, lighter where the crust is gone
-    const track = matte(0x333a34, 1);
-    for (const x of [-150, -144, -138, -126, -120]) {
-      const s = new THREE.Mesh(new THREE.PlaneGeometry(5.5, 86), track);
-      s.rotation.x = -Math.PI / 2;
-      s.position.set(x, -0.37, 0);
-      g.add(s);
-    }
+    // (the strips it has already worked are in the seabed - see seafloor.ts)
 
     // ---- the collector itself
     const body = box(8, 3.4, 13, metal(0xd8a23a, 0.5, 0.45));

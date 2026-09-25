@@ -44,7 +44,9 @@ for (const S of WORLDS) {
     const out = {};
     const z0 = w.eye.z;
     hold(['KeyW'], 4);
-    out.gate = { ok: w.eye.z < 30, z: +w.eye.z.toFixed(1), from: +z0.toFixed(1) };
+    // through the gate (the kerb is at z = 37) and four metres onto the pad:
+    // not a fixed distance, because on Psyche you walk at 3.4 m/s, not 4.2
+    out.gate = { ok: w.eye.z < 33, z: +w.eye.z.toFixed(1), from: +z0.toFixed(1) };
 
     const floor = w.eye.y;
     let peak = 0;

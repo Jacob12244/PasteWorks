@@ -15,12 +15,14 @@ import { UpstreamCircuit } from './upstream';
 import { RoomDecor } from './room';
 import type { Scenario, WorldKind } from '../scenario/types';
 import type { Dressing } from './worlds/common';
-import { buildSpace, LaunchFeed, MassDriver, PIT_HOLE } from './worlds/space';
-import { buildOcean, SeafloorLine, Furrow, FURROW_HOLE } from './worlds/ocean';
+import { LaunchFeed, MassDriver, PIT_HOLE } from './worlds/space';
+import { SeafloorLine, Furrow, FURROW_HOLE } from './worlds/ocean';
+import { buildSeafloor, NEREID_LOOK, NEREID_GROUND } from './worlds/seafloor';
 import { buildCity } from './worlds/city';
 import { FillLine, Craters, CRATER_HOLE } from './worlds/waste';
 import { buildEarth, GOLDFIELDS_LOOK, GOLDFIELDS_GROUND } from './worlds/earth';
 import { buildWasteland, LAST_SHIFT_LOOK, LAST_SHIFT_GROUND } from './worlds/wasteland';
+import { buildAsteroid, PSYCHE_LOOK, PSYCHE_GROUND } from './worlds/asteroid';
 import { CycloneBank, SpinRing, MagStack, type Dewaterer } from './dewater';
 import { DeepPress, MicrowaveDrier, EOPress, type Filterer } from './filters';
 import { CollectorFront, ReclaimFront, ScoopFront } from './fronts';
@@ -462,10 +464,16 @@ export class World {
     const land = look.world === 'earth' && !opts.arena;
     // and Last Shift in the dust of the place they left
     const dust = look.world === 'waste';
-    stage.applyLook(land ? { ...look, ...GOLDFIELDS_LOOK } : dust ? { ...look, ...LAST_SHIFT_LOOK } : look);
+    // and Nereid in the dark at the bottom of the sea
+    const sea = look.world === 'ocean';
+    // and Psyche on a curved, cratered, airless body of its own
+    const rock = look.world === 'space';
+    stage.applyLook(land ? { ...look, ...GOLDFIELDS_LOOK } : dust ? { ...look, ...LAST_SHIFT_LOOK }
+      : sea ? { ...look, ...NEREID_LOOK } : rock ? { ...look, ...PSYCHE_LOOK } : look);
     const sh = sheet();
     this.root.add(buildGround(
-      land ? GOLDFIELDS_GROUND : dust ? LAST_SHIFT_GROUND : { ...look.ground, wet: look.world === 'city' },
+      land ? GOLDFIELDS_GROUND : dust ? LAST_SHIFT_GROUND : sea ? NEREID_GROUND : rock ? PSYCHE_GROUND
+        : { ...look.ground, wet: look.world === 'city' },
       look.destination === 'trench' ? [FURROW_HOLE]
         : look.destination === 'craters' ? [CRATER_HOLE]
         : look.world === 'space' ? [PIT_HOLE] : [],
@@ -568,8 +576,8 @@ export class World {
     this.root.add(this.fx.group);
 
     switch (look.world) {
-      case 'space': this.dressing = buildSpace(this.root, stage.key); break;
-      case 'ocean': this.dressing = buildOcean(this.root); break;
+      case 'space': this.dressing = buildAsteroid(this.root, stage); break;
+      case 'ocean': this.dressing = buildSeafloor(this.root, stage); break;
       case 'city': this.dressing = buildCity(this.root); break;
       case 'waste': this.dressing = buildWasteland(this.root, stage); break;
       case 'earth': if (land) this.dressing = buildEarth(this.root, stage); break;
@@ -786,18 +794,7 @@ export class World {
       const l = new THREE.PointLight(0xffe9c4, 160, 70, 2);
       l.position.set(0, 17.5, 0);
       mast.add(l);
-      // underwater the light has somewhere to be seen: a cone of lit snow
-      if (kind === 'ocean') {
-        const beam = new THREE.Mesh(
-          new THREE.ConeGeometry(11, 17.5, 28, 1, true),
-          new THREE.MeshBasicMaterial({
-            color: 0x9fd8ff, transparent: true, opacity: 0.05,
-            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-          }),
-        );
-        beam.position.y = 17.8 / 2;
-        mast.add(beam);
-      }
+      // (underwater, the water the lamp lights is worked out in seafloor.ts)
       mast.position.set(x, 0, z);
       this.root.add(mast);
     }
