@@ -53,6 +53,12 @@ export interface GroundSpec {
   cut: boolean;
   /** a shinier pad, for a wet street */
   wet?: boolean;
+  /** the world lays ground of its own round the pad: no flat plain */
+  plainless?: boolean;
+  /** how strongly the pad grid shows (0.45); faint, it reads as saw-cut joints */
+  gridOpacity?: number;
+  /** a multiplier on the lit kerb and collar strips (1); low, they read as paint */
+  kerbGlow?: number;
 }
 
 /** A rectangle to leave out of the plain, x0 x1 z0 z1. */
@@ -93,14 +99,17 @@ export function buildGround(
     outline.holes.push(hole);
   }
 
-  const plain = new THREE.Mesh(new THREE.ShapeGeometry(outline), matte(spec.plain, 1));
-  plain.rotation.x = -Math.PI / 2;  // shape (x, y) -> world (x, -y): hence the -z above
-  plain.position.y = -0.4;
-  plain.receiveShadow = true;
-  // the ground is far bigger than anything else a walker collides with,
-  // so it is let in by name rather than by size
-  plain.userData.collider = true;
-  g.add(plain);
+  if (!spec.plainless) {
+    const plain = new THREE.Mesh(new THREE.ShapeGeometry(outline), matte(spec.plain, 1));
+    plain.rotation.x = -Math.PI / 2;  // shape (x, y) -> world (x, -y): hence the -z above
+    plain.position.y = -0.4;
+    plain.receiveShadow = true;
+    // the ground is far bigger than anything else a walker collides with,
+    // so it is let in by name rather than by size
+    plain.userData.collider = true;
+    g.add(plain);
+  }
+  const glowK = spec.kerbGlow ?? 1;
 
   // lit collar around the cut so the section edge reads as deliberate
   if (spec.cut) {
@@ -109,7 +118,7 @@ export function buildGround(
       [ROCK.x1 - ROCK.x0, (ROCK.x0 + ROCK.x1) / 2, ROCK.z1, 0],
       [ROCK.z1 - ROCK.z0, ROCK.x1, 0, Math.PI / 2],
     ] as const) {
-      const lit = strip(len, spec.kerb, 0.12, 1.3);
+      const lit = strip(len, spec.kerb, 0.12, 1.3 * glowK);
       lit.position.set(px, 0.05, pz);
       lit.rotation.y = rot;
       g.add(lit);
@@ -132,7 +141,7 @@ export function buildGround(
 
   // survey grid on the pad
   const grid = new THREE.GridHelper(150, 30, spec.grid[0], spec.grid[1]);
-  (grid.material as THREE.Material).opacity = 0.45;
+  (grid.material as THREE.Material).opacity = spec.gridOpacity ?? 0.45;
   (grid.material as THREE.Material).transparent = true;
   grid.position.set(-22, 0.02, 0);
   g.add(grid);
@@ -147,7 +156,7 @@ export function buildGround(
       const kerb = box(b - a, 0.45, 0.6, matte(0x30373f, 0.95));
       kerb.position.set((a + b) / 2, 0.2, sz);
       g.add(kerb);
-      const lit = strip(b - a - 0.4, spec.kerb, 0.07, 1.1);
+      const lit = strip(b - a - 0.4, spec.kerb, 0.07, 1.1 * glowK);
       lit.position.set((a + b) / 2, 0.44, sz);
       g.add(lit);
     }
@@ -156,7 +165,7 @@ export function buildGround(
   path.position.set(GATE, -0.2, 37 + 4.7);
   g.add(path);
   for (const sx of [-1, 1]) {
-    const edge = strip(9.2, spec.kerb, 0.05, 0.7);
+    const edge = strip(9.2, spec.kerb, 0.05, 0.7 * glowK);
     edge.rotation.y = Math.PI / 2;
     edge.position.set(GATE + sx * (GW - 0.25), 0.02, 37 + 4.7);
     g.add(edge);

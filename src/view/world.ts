@@ -18,7 +18,9 @@ import type { Dressing } from './worlds/common';
 import { buildSpace, LaunchFeed, MassDriver, PIT_HOLE } from './worlds/space';
 import { buildOcean, SeafloorLine, Furrow, FURROW_HOLE } from './worlds/ocean';
 import { buildCity } from './worlds/city';
-import { buildWaste, FillLine, Craters, CRATER_HOLE } from './worlds/waste';
+import { FillLine, Craters, CRATER_HOLE } from './worlds/waste';
+import { buildEarth, GOLDFIELDS_LOOK, GOLDFIELDS_GROUND } from './worlds/earth';
+import { buildWasteland, LAST_SHIFT_LOOK, LAST_SHIFT_GROUND } from './worlds/wasteland';
 import { CycloneBank, SpinRing, MagStack, type Dewaterer } from './dewater';
 import { DeepPress, MicrowaveDrier, EOPress, type Filterer } from './filters';
 import { CollectorFront, ReclaimFront, ScoopFront } from './fronts';
@@ -455,10 +457,15 @@ export class World {
    */
   constructor(private stage: Stage, readonly scenario: Scenario, private opts: { arena?: boolean } = {}) {
     const look = scenario.look;
-    stage.applyLook(look);
+    // Today stands in a real place: the goldfields, in daylight. Paste Wars
+    // keeps the night, and the flat ground its collision world was baked from.
+    const land = look.world === 'earth' && !opts.arena;
+    // and Last Shift in the dust of the place they left
+    const dust = look.world === 'waste';
+    stage.applyLook(land ? { ...look, ...GOLDFIELDS_LOOK } : dust ? { ...look, ...LAST_SHIFT_LOOK } : look);
     const sh = sheet();
     this.root.add(buildGround(
-      { ...look.ground, wet: look.world === 'city' },
+      land ? GOLDFIELDS_GROUND : dust ? LAST_SHIFT_GROUND : { ...look.ground, wet: look.world === 'city' },
       look.destination === 'trench' ? [FURROW_HOLE]
         : look.destination === 'craters' ? [CRATER_HOLE]
         : look.world === 'space' ? [PIT_HOLE] : [],
@@ -564,7 +571,8 @@ export class World {
       case 'space': this.dressing = buildSpace(this.root, stage.key); break;
       case 'ocean': this.dressing = buildOcean(this.root); break;
       case 'city': this.dressing = buildCity(this.root); break;
-      case 'waste': this.dressing = buildWaste(this.root); break;
+      case 'waste': this.dressing = buildWasteland(this.root, stage); break;
+      case 'earth': if (land) this.dressing = buildEarth(this.root, stage); break;
     }
   }
 

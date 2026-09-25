@@ -170,6 +170,38 @@ export class Stage {
   /** pixels drawn per CSS pixel, right now */
   get pixelRatio() { return this.renderer.getPixelRatio(); }
 
+  /** Put the stock dusk dome away, for a world that brings a sky of its own. */
+  hideDome() {
+    this.sky.visible = false;
+  }
+
+  /**
+   * Aim the key light down a direction (towards the sun), still at the site.
+   *
+   * The shadow box is square in the light's own frame, so a low sun spreads
+   * it along the ground in the sun's direction: pulled back further, with a
+   * longer range, it still reaches something standing well out along that
+   * line - a headframe - without growing across it.
+   */
+  aimSun(toSun: THREE.Vector3) {
+    this.key.position.copy(toSun).normalize().multiplyScalar(200);
+    this.key.shadow.camera.far = 480;
+    this.key.shadow.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * Reflections from a scene of the world's own - its sky and its ground -
+   * instead of the stock studio room, so the steel picks up where it stands.
+   * Rendered once; nothing about it costs a frame.
+   */
+  environmentFrom(scene: THREE.Scene) {
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const env = pmrem.fromScene(scene, 0, 0.1, 1000);
+    pmrem.dispose();
+    this.scene.environment?.dispose();
+    this.scene.environment = env.texture;
+  }
+
   private ratio() {
     const r = Math.min(devicePixelRatio, 2);
     if (!this.budget) return r;

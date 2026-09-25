@@ -15,6 +15,7 @@
  * feed straight to the bin.
  */
 import * as THREE from 'three';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Telemetry } from '../sim/plant';
 import { C, metal, matte, glow, glowUnique, liquor } from './palette';
 import { box, cyl, tube, strip, platform, ladder, pipeRun, pipeSupport, Beacon } from './parts';
@@ -22,6 +23,7 @@ import { flowMaterial, beltMaterial, setFlow, bandsFor, FlowMaterial } from './f
 import { FX, Spout } from './particles';
 import { Unit } from './units';
 import { rng, canvasTexture } from './worlds/common';
+import { perlin, fbm, Kit } from './worlds/land';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -517,37 +519,64 @@ export class ScoopFront extends Unit {
     const r = rng(61);
     this.beltTo = V(binX - 1.6, 7.2, 0);
 
-    // ---- the piles: lumpy cones in the colours of everything that got thrown away
-    const cols = [0x6a5238, 0x5a4a3a, 0x7a4a2a, 0x4e4a44, 0x6e6a5a];
+    // ---- the piles: rounded heaps of everything that got thrown away, lumpy
+    // all over, speckled with it, and with the bigger pieces sticking out
+    const JUNK = [0x6a5238, 0x5a4a3a, 0x6e5a44, 0x4e4a44, 0x6e6a5a, 0x7a6a58, 0x3e3a36];
+    const BITS = [0x8a4a3a, 0x4a6a8a, 0x6a8a5a, 0xa08a4a, 0x9a9a92];
+    const heapMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0.1 });
+    const lump = perlin(61);
+    const c = new THREE.Color();
+    // the junk in them, merged by material: four draw calls, not a hundred
+    const junk = new Kit();
+    const junkMats = [metal(0x7a5a3a, 0.8, 0.4), metal(0x5a6068, 0.8, 0.4), metal(0x6a4a3a, 0.8, 0.4)];
+    const tyre = matte(0x222020, 0.9);
+    const jm = new THREE.Matrix4(), jq = new THREE.Quaternion(), je = new THREE.Euler(), one = new THREE.Vector3(1, 1, 1);
     for (const [x, z, R, h] of [
       [-122, -26, 12, 9], [-104, 22, 10, 7], [-140, 12, 14, 10], [-88, -30, 9, 6],
       [-126, 36, 8, 5], [-150, -14, 11, 8], [-96, 40, 7, 5],
     ] as const) {
-      const geo = new THREE.ConeGeometry(R, h, 18, 5);
-      const pos = geo.attributes.position as THREE.BufferAttribute;
+      let geo: THREE.BufferGeometry = new THREE.CylinderGeometry(0.01, R, h, 40, 10, true);
+      geo.deleteAttribute('uv');
+      geo.deleteAttribute('normal');
+      geo = mergeVertices(geo);
+      const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+      const col = new Float32Array(pos.count * 3);
       for (let i = 0; i < pos.count; i++) {
-        const y = pos.getY(i);
-        if (y < h / 2 - 0.1) {
-          pos.setX(i, pos.getX(i) * (0.85 + r() * 0.3));
-          pos.setZ(i, pos.getZ(i) * (0.85 + r() * 0.3));
-          pos.setY(i, y + (r() - 0.5) * 0.8);
-        }
+        const t = (pos.getY(i) + h / 2) / h;
+        const a = Math.atan2(pos.getZ(i), pos.getX(i));
+        // a heap, not a cone: round-shouldered, a tip-head of lumps all over
+        const n = fbm(lump, Math.cos(a) * 2.2 + x * 0.1, Math.sin(a) * 2.2 + t * 3 + z * 0.1, 3);
+        const rad = R * Math.sqrt(Math.max(0, 1 - t)) * (1 + 0.22 * n);
+        pos.setXYZ(i, Math.cos(a) * rad, (t + 0.06 * n * (1 - t)) * h - h / 2, Math.sin(a) * rad);
+        c.setHex(r() < 0.12 ? BITS[Math.floor(r() * BITS.length)] : JUNK[Math.floor(r() * JUNK.length)]);
+        c.multiplyScalar(0.55 + 0.45 * Math.min(1, t * 3) + (r() - 0.5) * 0.15);
+        col.set([c.r, c.g, c.b], i * 3);
       }
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
       geo.computeVertexNormals();
-      const pile = new THREE.Mesh(geo, matte(cols[Math.floor(r() * cols.length)], 1));
+      const pile = new THREE.Mesh(geo, heapMat);
       pile.position.set(x, h / 2 - 0.4, z);
-      pile.castShadow = true;
+      pile.castShadow = pile.receiveShadow = true;
       g.add(pile);
       this.piles.push(V(x, 0, z));
-      // junk sticking out of it
-      for (let k = 0; k < 7; k++) {
-        const a = r() * Math.PI * 2, rr = R * (0.2 + r() * 0.6);
-        const j = box(0.4 + r() * 1.6, 0.3 + r() * 1.2, 0.4 + r() * 1.4, metal(r() < 0.5 ? 0x7a5a3a : 0x5a6068, 0.8, 0.4));
-        j.position.set(x + Math.cos(a) * rr, (h * (1 - rr / R)) * 0.9, z + Math.sin(a) * rr);
-        j.rotation.set(r() * 3, r() * 3, r() * 3);
-        g.add(j);
+      // what sticks out of it: crates, drums, tyres, sheet
+      for (let k = 0; k < 18; k++) {
+        const a = r() * Math.PI * 2, rr = R * (0.15 + r() * 0.75);
+        const kind = r();
+        const mat = junkMats[Math.floor(r() * junkMats.length)];
+        const geo = kind < 0.45 ? new THREE.BoxGeometry(0.4 + r() * 1.6, 0.3 + r() * 1.2, 0.4 + r() * 1.4)
+          : kind < 0.7 ? new THREE.CylinderGeometry(0.3, 0.3, 0.9, 10)
+          : kind < 0.85 ? new THREE.TorusGeometry(0.42, 0.17, 5, 10)
+          : new THREE.BoxGeometry(2 + r(), 0.06, 1 + r());
+        jm.compose(
+          new THREE.Vector3(x + Math.cos(a) * rr, h * (1 - (rr / R) ** 2) * 0.95 - 0.4, z + Math.sin(a) * rr),
+          jq.setFromEuler(je.set(r() * 3, r() * 3, r() * 3)), one,
+        );
+        geo.applyMatrix4(jm);
+        junk.add(kind >= 0.7 && kind < 0.85 ? tyre : mat, geo);
       }
     }
+    junk.build(g);
 
     // ---- the crusher: hopper, hammer mill, motor and flywheel
     const H = this.HOP;

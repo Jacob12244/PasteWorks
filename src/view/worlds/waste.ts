@@ -1,25 +1,29 @@
 /**
- * Earth, long after. Orange haze, blowing dust, towers of compacted rubbish
- * stacked by whatever had this job before, the dead skyline of the city they
- * left, and a field of craters from the last war. The plant fills them one
- * at a time, with the waste they left behind.
+ * Earth, long after: the fill line and the craters of the last war, which
+ * the plant fills one at a time with the waste they left behind. The world
+ * round them - the dust, the towers of compacted rubbish, the dead city - is
+ * wasteland.ts.
  */
 import * as THREE from 'three';
 import type { Telemetry } from '../../sim/plant';
 import { DESIGN } from '../../sim/plant';
 import type { Names } from '../../scenario';
-import { C, metal, matte, glowUnique, glow } from '../palette';
-import { box, cyl, tube, pipeSupport, flange, strip } from '../parts';
+import { C, matte, glowUnique, glow } from '../palette';
+import { cyl, tube, pipeSupport, flange } from '../parts';
 import { flowMaterial, setFlow, bandsFor, FlowMaterial } from '../flow';
 import { Unit } from '../units';
-import { Dressing, Field, rng, clamp01 } from './common';
+import { rng, clamp01 } from './common';
 
 /** Crater 4: a bowl 22 m across the radius and 12 m deep, which holds 6,082 m3. */
 export const CRATER = { x: 88, z: 0, R: 22, H: 12 };
+/** The rest of the field, [x, z, radius]: the ones already filled and greening... */
+export const FILLED_CRATERS = [[54, -48, 12], [128, 34, 14], [146, -30, 10], [70, 52, 9]] as const;
+/** ...and the ones still to do, which the ground itself is dug out for. */
+export const OPEN_CRATERS = [[170, 60, 16], [110, 78, 11], [190, -14, 13], [160, -70, 18]] as const;
 export const CRATER_HOLE: [number, number, number, number] = [
   CRATER.x - CRATER.R, CRATER.x + CRATER.R, CRATER.z - CRATER.R, CRATER.z + CRATER.R,
 ];
-const GROUND = -0.4;
+export const GROUND = -0.4;
 
 // ---------------------------------------------------------------- the line
 
@@ -141,11 +145,12 @@ export class Craters extends Unit {
     this.skin.userData.noCollide = true;
     g.add(this.skin);
 
-    // the rest of the field: some done and greening, some still to do
+    // the rest of the field: some done and greening; the ones still to do are
+    // dug into the ground itself (wasteland.ts)
     const r = rng(83);
     const filled = matte(0x5a5236, 1);
     const sprout = glow(0x9fe870, 1.2);
-    for (const [cx, cz, cr] of [[54, -48, 12], [128, 34, 14], [146, -30, 10], [70, 52, 9]] as const) {
+    for (const [cx, cz, cr] of FILLED_CRATERS) {
       const patch = new THREE.Mesh(new THREE.CircleGeometry(cr, 40), filled);
       patch.rotation.x = -Math.PI / 2;
       patch.position.set(cx, GROUND + 0.02, cz);
@@ -162,19 +167,6 @@ export class Craters extends Unit {
         g.add(s);
       }
     }
-    const dark = matte(0x201a14, 1);
-    for (const [cx, cz, cr] of [[170, 60, 16], [110, 78, 11], [190, -14, 13], [160, -70, 18]] as const) {
-      const pit = new THREE.Mesh(new THREE.CircleGeometry(cr, 40), dark);
-      pit.rotation.x = -Math.PI / 2;
-      pit.position.set(cx, GROUND + 0.02, cz);
-      g.add(pit);
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(cr, 1.1, 6, 40), matte(0x57473a, 1));
-      ring.rotation.x = Math.PI / 2;
-      ring.scale.z = 0.5;
-      ring.position.set(cx, GROUND + 0.1, cz);
-      g.add(ring);
-    }
-
     // the thing on the rim
     const sprig = new THREE.Group();
     const stem = cyl(0.03, 0.045, 0.6, glow(0x7ad860, 0.8), 6);
@@ -219,98 +211,4 @@ export class Craters extends Unit {
       s.pct > 1 && !ok ? 'warn' : 'ok',
     );
   }
-}
-
-// ---------------------------------------------------------------- the world
-
-export function buildWaste(root: THREE.Group): Dressing {
-  const r = rng(29);
-
-  // ---- towers of compacted rubbish, stacked by whatever had the job before
-  const cube = new THREE.BoxGeometry(1.8, 1.8, 1.8);
-  const cubes = new THREE.InstancedMesh(cube, new THREE.MeshStandardMaterial({ roughness: 0.95 }), 1600);
-  cubes.userData.solid = true;
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const e = new THREE.Euler();
-  const col = new THREE.Color();
-  const palette = [0x6a5238, 0x5a4a3a, 0x7a5a3a, 0x4e4a44, 0x6e6250, 0x5e4630];
-  let n = 0;
-  const clear = (x: number, z: number) =>
-    (x > -170 && x < 210 && z > -90 && z < 90) || (z > 40 && Math.abs(x + 20) < 170);
-  for (let t = 0; t < 400 && n < 1600; t++) {
-    const x = (r() - 0.5) * 760, z = -360 + r() * 520;
-    if (clear(x, z)) continue;
-    const high = 6 + Math.floor(r() ** 1.3 * 38);
-    const lean = (r() - 0.5) * 0.02;
-    for (let k = 0; k < high && n < 1600; k++) {
-      e.set(0, (r() - 0.5) * 0.2, 0);
-      q.setFromEuler(e);
-      m.compose(new THREE.Vector3(x + lean * k * 1.8 * 10, GROUND + 0.9 + k * 1.8, z), q, new THREE.Vector3(1, 1, 1));
-      cubes.setMatrixAt(n, m);
-      col.setHex(palette[Math.floor(r() * palette.length)]).multiplyScalar(0.8 + r() * 0.4);
-      cubes.setColorAt(n, col);
-      n++;
-    }
-  }
-  cubes.count = n;
-  cubes.castShadow = true;
-  root.add(cubes);
-
-  // ---- the city they left, a long way off in the haze
-  const ruin = matte(0x3a2c20, 1);
-  for (let i = 0; i < 26; i++) {
-    const a = -Math.PI * 0.85 + (i / 26) * Math.PI * 0.7 + (r() - 0.5) * 0.05;
-    const d = 420 + r() * 180;
-    const x = Math.cos(a) * d, z = Math.sin(a) * d;
-    let y = GROUND, w = 18 + r() * 26;
-    const floors = 2 + Math.floor(r() * 4);
-    for (let f = 0; f < floors; f++) {
-      const h = 20 + r() * 60;
-      const b = box(w, h, w * (0.7 + r() * 0.5), ruin);
-      b.position.set(x + (r() - 0.5) * 4, y + h / 2, z);
-      root.add(b);
-      y += h;
-      w *= 0.55 + r() * 0.3;
-    }
-  }
-
-  // ---- a water tanker by the store, because nothing else brings water
-  const tanker = new THREE.Group();
-  const cab = box(2.4, 2.6, 2.6, metal(0x8a5a2a, 0.6, 0.4));
-  cab.position.set(4.4, 1.9, 0);
-  tanker.add(cab);
-  const tank = cyl(1.3, 1.3, 7, metal(0x9aa2a8, 0.4, 0.8), 18);
-  tank.rotation.z = Math.PI / 2;
-  tank.position.set(-0.6, 2.1, 0);
-  tanker.add(tank);
-  const band = strip(7, C.water, 0.1, 1.4);
-  band.position.set(-0.6, 3.45, 0);
-  tanker.add(band);
-  for (const wx of [-3, 0, 4.4]) {
-    for (const wz of [-1.2, 1.2]) {
-      const wheel = cyl(0.6, 0.6, 0.4, matte(0x1a1a1a, 0.9), 12);
-      wheel.rotation.x = Math.PI / 2;
-      wheel.position.set(wx, 0.6, wz);
-      tanker.add(wheel);
-    }
-  }
-  tanker.position.set(9, 0, 23);
-  tanker.rotation.y = 0.4;
-  root.add(tanker);
-
-  // ---- blowing dust
-  const dust = new Field({
-    count: 1600,
-    min: new THREE.Vector3(-260, 0, -200), max: new THREE.Vector3(260, 50, 200),
-    drift: new THREE.Vector3(3.4, 0.05, 0.9), wobble: 1.2,
-    size: 0.55, colour: 0xc8a070, opacity: 0.32, seed: 37,
-  });
-  root.add(dust.object);
-
-  return {
-    update(t: Telemetry, dt: number) {
-      dust.update(t, dt);
-    },
-  };
 }
