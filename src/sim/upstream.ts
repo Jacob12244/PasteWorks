@@ -19,8 +19,9 @@
  */
 
 import { clamp } from './streams';
+import type { BinderSpec, BinderType } from './binders';
 
-export type BinderType = 'opc' | 'slag';
+export type { BinderType } from './binders';
 
 /**
  * Where the plant's feed comes from. Each world gets its tailings a different
@@ -53,8 +54,12 @@ export interface UpstreamSetpoints {
   deslime: boolean;
   /** cyclone feed pressure, kPa - sets the cut size */
   cyclonePressure: number;
-  /** ordinary portland, or a slag blend that resists sulphate attack */
+  /** which of this site's two binders is in the silo */
   binderType: BinderType;
+  /** hammer crusher rotor speed, rpm - tip speed is what does the breaking */
+  rotor: number;
+  /** hammer crusher discharge grate opening, mm - its closed-side setting */
+  grate: number;
 }
 
 export const DEFAULT_UPSTREAM: UpstreamSetpoints = {
@@ -63,6 +68,8 @@ export const DEFAULT_UPSTREAM: UpstreamSetpoints = {
   deslime: true,
   cyclonePressure: 110,
   binderType: 'opc',
+  rotor: 1000,
+  grate: 4,
 };
 
 export const ORE = {
@@ -96,6 +103,12 @@ export const ORE = {
   costGrinding: 0.11,  // $/kWh, same power price as the backfill plant
   costFrother: 5800,   // $/t
 
+  // ---- a hammer crusher (the scoop) -----------------------------------
+  /** t/h the discharge grate passes at its 4 mm design opening */
+  crusherCap: 560,
+  /** tramp steel in the waste the loaders scoop, fraction */
+  scrapFrac: 0.05,
+
   // ---- grinding media -------------------------------------------------
   /** forged high-chrome balls, delivered */
   costMedia: 1250,     // $/t
@@ -109,9 +122,9 @@ export const ORE = {
  * Grinding media consumption, t/h. Steel wears out faster the harder you are
  * grinding, so a fine grind eats its own charge.
  */
-export function mediaDraw(millFeed: number, specificEnergy: number): number {
+export function mediaDraw(millFeed: number, specificEnergy: number, duty = 1): number {
   const wear = clamp(0.62 + 0.035 * specificEnergy, 0.6, 1.6);   // kg/t of ore
-  return (clamp(millFeed, 0, 900) * ORE.mediaKgPerT * wear) / 1000;
+  return (clamp(millFeed, 0, 900) * ORE.mediaKgPerT * wear * duty) / 1000;
 }
 
 /**
@@ -162,6 +175,19 @@ export interface FeedSpec {
   d50c: number;            // um, deslime cut size
   toTsf: number;           // t/h of fines rejected to the tailings facility
   deslimeSplit: number;    // fraction of flotation tails reporting to backfill
+
+  // --- a hammer crusher; a mill reports its feed and nothing else ---
+  /** t/h actually through the grinder */
+  crushed: number;
+  /** t/h the crusher's grate will pass */
+  crusherCap: number;
+  /** multiplier on media wear - tip speed and a tight grate work hammers hard */
+  duty: number;
+  /** % tramp steel the magnet missed, left in the fill to rust */
+  steel: number;
+  /** what the crusher is being run at: rotor rpm and grate mm, 0 without one */
+  rotor: number;
+  grate: number;
 }
 
 /** Multipliers the tailings PSD and chemistry apply to the backfill plant. */
@@ -208,6 +234,7 @@ export function upstream(sp: UpstreamSetpoints, hard: boolean, health = 1): Feed
       massPull: 0, concentrate: 0, sulphideRecovery: 0,
       liberation: 1, workIndex: ORE.bondWi,
       d50c: 0, toTsf: 0, deslimeSplit: 1,
+      crushed: 0, crusherCap: Infinity, duty: 1, steel: 0, rotor: 0, grate: 0,
     };
   }
 
@@ -291,13 +318,17 @@ export function upstream(sp: UpstreamSetpoints, hard: boolean, health = 1): Feed
     concentrate,
     sulphideRecovery: recovery,
     d50c, toTsf, deslimeSplit,
+    crushed: feed, crusherCap: Infinity, duty: 1, steel: 0, rotor: 0, grate: 0,
   };
 }
 
-/** Bond's law on whatever is doing the grinding - a ball mill or a crusher. */
-function grind(feed: number, health: number) {
+/**
+ * Bond's law on whatever is doing the grinding - a ball mill or a crusher.
+ * @param speed power multiplier: a hammer rotor spun faster puts more in
+ */
+function grind(feed: number, health: number, speed = 1) {
   const media = mediaEffect(health);
-  const millPower = ORE.millPowerKw * media.power;
+  const millPower = ORE.millPowerKw * media.power * speed;
   const workIndex = ORE.bondWi * media.workIndex;
   const specificEnergy = millPower / feed;
   const invSqrtP = specificEnergy / (10 * workIndex) + 1 / Math.sqrt(ORE.f80);
@@ -351,6 +382,7 @@ function magnetic(sp: UpstreamSetpoints, health: number): FeedSpec {
     massPull: (concentrate / feed) * 100, concentrate,
     sulphideRecovery: recovery,
     d50c: d.d50c, toTsf: d.toTsf, deslimeSplit: d.split,
+    crushed: feed, crusherCap: Infinity, duty: 1, steel: 0, rotor: 0, grate: 0,
   };
 }
 
@@ -365,18 +397,14 @@ function magnetic(sp: UpstreamSetpoints, health: number): FeedSpec {
  */
 function otherSources(sp: UpstreamSetpoints, health: number): FeedSpec {
   const feed = clamp(sp.millFeed, 150, 700);
-  let p80 = ORE.nativeP80;
-  let millPower = ORE.millPowerKw * (feed / 420);
-  let specificEnergy = millPower / feed;
-  let workIndex = ORE.bondWi;
-  if (ORE.source === 'scoop') {
-    const g = grind(feed, health);
-    ({ p80, millPower, specificEnergy, workIndex } = g);
-  }
+  if (ORE.source === 'scoop') return crusher(sp, feed, health);
+  const p80 = ORE.nativeP80;
+  const millPower = ORE.millPowerKw * (feed / 420);
+  const specificEnergy = millPower / feed;
+  const workIndex = ORE.bondWi;
   const fines20 = clamp(passing(20, p80, ORE.ggsM), 0.04, 0.72);
 
-  const pulled = ORE.separation === 'nodules' ? ORE.noduleFrac
-    : ORE.separation === 'scrap' ? 0.04 : 0;
+  const pulled = ORE.separation === 'nodules' ? ORE.noduleFrac : 0;
   const concentrate = feed * pulled;
   const tails = feed - concentrate;
   const sulphide = ORE.nativeSulphide;
@@ -394,6 +422,62 @@ function otherSources(sp: UpstreamSetpoints, health: number): FeedSpec {
     massPull: pulled * 100, concentrate,
     sulphideRecovery: 0,
     d50c: d.d50c, toTsf: d.toTsf, deslimeSplit: d.split,
+    crushed: feed, crusherCap: Infinity, duty: 1, steel: 0, rotor: 0, grate: 0,
+  };
+}
+
+/**
+ * The last shift's hammer crusher, run the way one was run in 1950: a rotor
+ * speed and a grate.
+ *
+ *   rotor  tip speed does the breaking, so more rpm puts more energy into
+ *          every tonne - and wears the hammers as roughly the 2.5 power of it
+ *   grate  the bars the product has to fall through, which is a hammer
+ *          mill's closed-side setting: tighter makes it finer, and holds
+ *          back tonnes the loaders then have to wait on
+ *
+ * The magnet can only pull steel the crusher has broken free, so a coarse
+ * product leaves tramp steel locked in the lumps - and steel in the fill
+ * rusts, swells and jacks it apart. Coarse binds well and pumps easily; the
+ * steel is what stops coarse being simply better.
+ */
+function crusher(sp: UpstreamSetpoints, feed: number, health: number): FeedSpec {
+  const speed = clamp(sp.rotor, 600, 1500) / 1000;
+  const gap = clamp(sp.grate, 1, 10);
+  const crusherCap = ORE.crusherCap * Math.pow(gap / 4, 0.7);
+  const crushed = Math.min(feed, crusherCap);
+  const g = grind(crushed, health, speed);
+  const p80 = clamp(g.p80 * Math.pow(gap / 4, 0.45), 18, 900);
+  const fines20 = clamp(passing(20, p80, ORE.ggsM), 0.04, 0.72);
+
+  // Size decides how much steel is still wrapped in rubble; tip speed decides
+  // how hard each lump is hit, and a hard enough blow cracks the steel out
+  // of it whatever size the lump ends up.
+  const impact = clamp(0.55 + 0.45 * speed, 0.8, 1.2);
+  const liberation = clamp((1 - 0.85 * Math.max(0, (p80 - 140) / 300)) * impact, 0.3, 1.06);
+  const recovery = clamp(0.92 * liberation, 0, 0.975);
+  const pulled = ORE.scrapFrac * recovery;
+  const concentrate = crushed * pulled;
+  const tails = crushed - concentrate;
+  const steel = (100 * ORE.scrapFrac * (1 - recovery)) / Math.max(1 - pulled, 1e-6);
+  const sulphide = ORE.nativeSulphide;
+  const sulphideMassFrac = clamp(sulphide / 100 / 0.535, 0, 0.3);
+  const sg = 1 / ((1 - sulphideMassFrac) / ORE.sgGangue + sulphideMassFrac / ORE.sgSulphide);
+  const d = deslime(sp, tails, p80, fines20);
+
+  return {
+    solids: d.solids,
+    cw: clamp(ORE.nativeCw, 0.05, 0.95),
+    p80, fines20: d.fines, sulphide, sg, hard: true,
+    specificEnergy: g.specificEnergy, millPower: g.millPower,
+    millLimited: false,
+    liberation, workIndex: g.workIndex,
+    massPull: pulled * 100, concentrate,
+    sulphideRecovery: recovery,
+    d50c: d.d50c, toTsf: d.toTsf, deslimeSplit: d.split,
+    crushed, crusherCap, rotor: speed * 1000, grate: gap,
+    duty: Math.pow(speed, 2.5) * Math.pow(4 / gap, 0.3),
+    steel,
   };
 }
 
@@ -402,7 +486,7 @@ function otherSources(sp: UpstreamSetpoints, health: number): FeedSpec {
  * Everything is expressed relative to the standard-mode tailings, so in
  * standard mode every multiplier is exactly 1.
  */
-export function feedEffects(f: FeedSpec, binder: BinderType): FeedEffects {
+export function feedEffects(f: FeedSpec, binder: BinderSpec): FeedEffects {
   // Standard mode is the calibration point: whatever those tailings are, the
   // backfill models were fitted against them, so nothing is modified.
   if (!f.hard) {
@@ -420,18 +504,19 @@ export function feedEffects(f: FeedSpec, binder: BinderType): FeedEffects {
   const yieldStress = clamp(Math.pow(rel, 0.55), 0.55, 2.2);
 
   // Coarser tails bind better per tonne of binder; sulphides attack ordinary
-  // portland over the curing period, which a slag blend largely resists.
+  // portland over the curing period, which a slag blend largely resists. Each
+  // binder says for itself how much sulphate it minds.
   const psdGain = clamp(Math.pow(1 / rel, 0.22), 0.8, 1.35);
   const s = clamp(f.sulphide, 0, 3);
-  const sulphatePenalty = binder === 'slag'
-    ? 1 - 0.07 * s
-    : 1 - 0.30 * s;
+  const sulphatePenalty = 1 - binder.sulphate * s;
+  // tramp steel rusts in the fill, and rust takes up more room than steel did
+  const rust = clamp(1 - 0.16 * f.steel, 0.4, 1);
 
   return {
     filterCapacity,
     cakeMoisture,
     yieldStress,
-    ucs: clamp(psdGain * clamp(sulphatePenalty, 0.15, 1), 0.1, 1.5),
+    ucs: clamp(psdGain * clamp(sulphatePenalty, 0.15, 1) * rust, 0.1, 1.5),
   };
 }
 

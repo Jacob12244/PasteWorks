@@ -22,6 +22,7 @@ import type { Scenario } from '../scenario';
 import { sheet, type Sheet } from '../scenario/flowsheet';
 import {
   SliderSpec, bagValue, setBagValue, shown, upstreamSliders, plantSliders,
+  swapBinder, binderIn,
 } from './setpoints';
 
 const el = <K extends keyof HTMLElementTagNameMap>(
@@ -57,9 +58,9 @@ interface NodeSpec {
 
 const MIMIC: NodeSpec[] = [
   { id: 'mill', col: 0, row: 0, name: 'BALL MILL',
-    alarms: ['media-low', 'media-out', 'liberation'] },
+    alarms: ['media-low', 'media-out', 'liberation', 'crusher-choked'] },
   { id: 'flot', col: 0, row: 1, name: 'FLOTATION', series: true,
-    alarms: ['sulphide-high'] },
+    alarms: ['sulphide-high', 'steel'] },
   { id: 'cyc', col: 0, row: 2, name: 'DESLIME CYCLONES', series: true,
     alarms: ['supply-short'] },
   { id: 'thk', col: 0, row: 3, name: 'THICKENER 01', series: true,
@@ -69,7 +70,7 @@ const MIMIC: NodeSpec[] = [
   { id: 'pw', col: 0, row: 5, name: 'PROCESS WATER',
     alarms: ['pw-high', 'pw-spill'] },
 
-  { id: 'prs', col: 1, row: 0, name: 'PLATE PRESS' },
+  { id: 'prs', col: 1, row: 0, name: 'PLATE PRESS', alarms: ['trap', 'bleed'] },
   { id: 'bin', col: 1, row: 1, name: 'CAKE BIN', series: true,
     alarms: ['cake-low', 'cake-full'] },
   { id: 'silo', col: 1, row: 2, name: 'BINDER SILO', alarms: ['silo-low'] },
@@ -110,6 +111,10 @@ const LAMPS: LampSpec[] = [
   { id: '@plug', text: 'LINE PLUGGED', level: 'trip' },
   { id: '@starve', text: 'PUMP STARVED', level: 'warn' },
   { id: 'plume', text: 'FINES TO OVERFLOW', level: 'warn' },
+  { id: 'bleed', text: 'FINES THROUGH CLOTH', level: 'warn' },
+  { id: 'trap', text: 'COLD TRAP FROSTED', level: 'warn' },
+  { id: 'crusher-choked', text: 'CRUSHER CHOKED', level: 'warn' },
+  { id: 'steel', text: 'TRAMP STEEL', level: 'warn' },
 ];
 
 // ------------------------------------------------------------------ trends
@@ -169,10 +174,15 @@ const PROCESS_TRENDS: TrendSpec[] = [
     min: 0, max: 40, dp: 2, pick: (t) => t.cost.perM3 },
 ];
 
-/** Only where a cyclone bank or a centrifuge sends fines out of the top. */
+/** Only where fines leave the plant, out of a cyclone's top or through a cloth. */
 const PLUME_TREND: TrendSpec = {
-  key: 'plume', label: 'Fines to overflow', unit: 't/h', colour: '#ff8f6b',
-  min: 0, max: 10, dp: 1, pick: (t) => t.thickener.overflow.solids,
+  key: 'plume', label: 'Fines to the sea', unit: 't/h', colour: '#ff8f6b',
+  min: 0, max: 10, dp: 1, pick: (t) => t.thickener.overflow.solids + t.filter.bleed,
+};
+/** Only where the water boils off into a vacuum and a cold trap catches it. */
+const TRAP_TREND: TrendSpec = {
+  key: 'trap', label: 'Vapour past the trap', unit: 't/h', colour: '#bfe4ff',
+  min: 0, max: 12, dp: 1, pick: (t) => t.filter.trapLoss,
 };
 /** Only where every litre of mix water is hauled in. */
 const HAULED_TREND: TrendSpec = {
@@ -180,7 +190,7 @@ const HAULED_TREND: TrendSpec = {
   min: 0, max: 80, dp: 1, pick: (t) => t.water.makeUp,
 };
 
-const ALL_TRENDS = [...LEVEL_TRENDS, ...PROCESS_TRENDS, PLUME_TREND, HAULED_TREND];
+const ALL_TRENDS = [...LEVEL_TRENDS, ...PROCESS_TRENDS, PLUME_TREND, TRAP_TREND, HAULED_TREND];
 
 /** 540 samples at one every 40 shift-seconds is exactly six hours of history. */
 const SAMPLES = 540;
@@ -398,7 +408,7 @@ export class Scada {
     };
     const rename: Record<string, string> = {
       mill: sh.tiles.source, flot: sh.tiles.separation, cyc: sh.tiles.deslime,
-      thk: sh.tiles.dewater, bin: sh.tiles.bin, pw: sh.tiles.water,
+      thk: sh.tiles.dewater, prs: sh.tiles.filter, bin: sh.tiles.bin, pw: sh.tiles.water,
     };
     const rows = [0, 0];
     this.nodes = MIMIC.filter((n) => has(n.id)).map((n) => {
@@ -415,17 +425,28 @@ export class Scada {
         case 'media-low': case 'media-out': return sh.hasMedia;
         case 'liberation': return sh.source === 'mill';
         case 'sulphide-high': return sh.hasSulphide;
-        case 'thk-rise': case 'thk-bed': case 'rake-high': case 'rake-trip': return sh.hasThickener;
+        case 'thk-rise': case 'thk-bed': case 'rake-high': case 'rake-trip': return sh.hasBed;
         case 'uf-limited': return sh.hasUf;
         case 'uf-low': case 'surge-spill': return sh.hasSurge;
         case 'pw-high': case 'pw-spill': return sh.canSpillWater;
-        case 'plume': return sh.hasPlume;
+        case 'plume': return sh.dewater === 'cyclones';
+        case 'bleed': return sh.filter === 'deeppress';
+        case 'trap': return sh.filter === 'microwave';
+        case 'crusher-choked': case 'steel': return sh.source === 'scoop';
         default: return true;
       }
     }).map((l) => {
       if (l.id === 'media-low') return { ...l, text: sh.media.short.toUpperCase() + ' LOW' };
       if (l.id === 'media-out') return { ...l, text: sh.source === 'scoop' ? 'HAMMERS WORN' : l.text };
       if (l.id === 'uf-limited' && sh.dewater === 'cyclones') return { ...l, text: 'U/F AT CYCLONE LIMIT' };
+      if (l.id === 'rake-high') return { ...l, text: sh.torque.short + ' HIGH' };
+      if (l.id === 'rake-trip') return { ...l, text: sh.torque.short + ' TRIP' };
+      if (l.id === 'thk-bed' && sh.dewater !== 'thickener') {
+        return { ...l, text: (sh.dewater === 'spinring' ? 'RING' : 'STACK') + ' BED HIGH' };
+      }
+      if (l.id === 'thk-rise' && sh.dewater !== 'thickener') {
+        return { ...l, text: sh.dewater === 'spinring' ? 'CARRY-OVER' : 'FLOCS ESCAPING' };
+      }
       return l;
     });
 
@@ -433,18 +454,20 @@ export class Scada {
       switch (tr.key) {
         case 'srg': return sh.hasSurge;
         case 'pw': return sh.dewater !== 'dry';
-        case 'bed': return sh.hasThickener;
+        case 'bed': return sh.hasBed;
         case 'media': return sh.hasMedia;
         default: return true;
       }
     }).map((tr) => (tr.key === 'media' ? { ...tr, label: sh.media.short }
+      : tr.key === 'bed' ? { ...tr, label: sh.dewater === 'spinring' ? 'Ring bed'
+        : sh.dewater === 'magstack' ? 'Stack bed' : tr.label }
       : tr.key === 'cake' && sh.dewater === 'dry' ? { ...tr, label: 'Crushed waste bin' } : tr));
     if (sh.hasPlume) this.levelTrends.splice(2, 0, PLUME_TREND);
+    if (sh.filter === 'microwave') this.levelTrends.splice(2, 0, TRAP_TREND);
     if (sh.dewater === 'dry') this.levelTrends.splice(1, 0, HAULED_TREND);
 
     this.processTrends = PROCESS_TRENDS.filter((tr) => tr.key !== 'torq' || sh.hasTorque)
-      .map((tr) => (tr.key === 'torq' && sh.dewater === 'centrifuge'
-        ? { ...tr, label: 'Scroll torque' } : tr));
+      .map((tr) => (tr.key === 'torq' ? { ...tr, label: sh.torque.label } : tr));
   }
 
   // ---------------------------------------------------------------- building
@@ -633,9 +656,8 @@ export class Scada {
     const des = el('button');
     des.onclick = () => { this.plant.up.deslime = !this.plant.up.deslime; };
     const bnd = el('button');
-    bnd.onclick = () => {
-      this.plant.up.binderType = this.plant.up.binderType === 'opc' ? 'slag' : 'opc';
-    };
+    bnd.onclick = () => swapBinder(this.plant);
+    bnd.title = this.sh.binders.map((b) => b.name + ': ' + b.hint).join('\n');
     this.lampStrip.set('deslime', des);
     this.lampStrip.set('binder', bnd);
     if (this.sh.hasDeslime) toggles.append(des, bnd);
@@ -915,9 +937,12 @@ export class Scada {
       } else if (sh.source === 'reclaim') {
         this.setTile('mill', feedRate, 'old tails · P80 ' + f(u.p80) + ' µm · ' + f(u.sulphide, 2) + '% S', st('mill'));
       } else if (sh.source === 'scoop') {
-        this.setTile('mill', f(u.p80) + ' µm', feedRate + ' scooped · hammers '
+        const up = this.plant.up;
+        this.setTile('mill', f(u.p80) + ' µm', f(u.crushed) + ' of ' + feedRate + ' crushed · '
+          + f(up.rotor) + ' rpm · grate ' + f(up.grate, 1) + ' mm · hammers '
           + f(t.media.health * 100) + '%', st('mill'));
-        this.setTile('flot', f(u.concentrate, 1) + ' t/h', 'scrap steel off the crusher belt', st('flot'));
+        this.setTile('flot', f(u.steel, 2) + ' %', 'steel left in the fill · '
+          + f(u.concentrate, 1) + ' t/h pulled off the belt', st('flot'));
       } else {
         this.setTile('mill', f(u.p80) + ' µm',
           feedRate + ' ore · ' + f(u.specificEnergy, 1)
@@ -941,9 +966,12 @@ export class Scada {
     if (sh.dewater === 'cyclones') {
       this.setTile('thk', f(th.ufCw * 100, 1) + ' %', 'fines to sea ' + f(th.overflow.solids, 1)
         + ' t/h · bypassed ' + f(u.bypassToTsf) + ' t/h', st('thk'));
-    } else if (sh.dewater === 'centrifuge') {
-      this.setTile('thk', f(th.ufCw * 100, 1) + ' %', 'scroll torque ' + f(th.torque)
-        + '% · centrate ' + f(th.overflowClarity) + ' mg/L', st('thk'));
+    } else if (sh.dewater === 'spinring') {
+      this.setTile('thk', f(th.ufCw * 100, 1) + ' %', f(this.plant.sp.spin, 1) + ' rpm = '
+        + f(th.g, 2) + ' g · imbalance ' + f(th.torque) + '% · bed ' + f(th.bedPct) + '%', st('thk'));
+    } else if (sh.dewater === 'magstack') {
+      this.setTile('thk', f(th.ufCw * 100, 1) + ' %', f(th.field, 2) + ' T · coils ' + f(th.torque)
+        + '% · rise ' + f(th.riseRate, 1) + '/' + f(th.riseLimit, 1) + ' m/h', st('thk'));
     } else {
       this.setTile('thk', f(th.ufCw * 100, 1) + ' %',
         'bed ' + f(th.bedPct) + '% · torque ' + f(th.torque) + '% · rise '
@@ -965,15 +993,24 @@ export class Scada {
     }
 
     const fl = t.filter;
-    this.setTile('prs', f(fl.throughput) + ' t/h',
-      f(fl.cycleTime, 1) + ' min cycle · cake ' + f(fl.cakeMoisture, 1)
-      + '% moisture · ' + f(fl.utilisation) + '% util', st('prs'));
+    const sp = this.plant.sp;
+    this.setTile('prs', f(fl.throughput) + ' t/h', {
+      press: f(fl.cycleTime, 1) + ' min cycle · cake ' + f(fl.cakeMoisture, 1)
+        + '% moisture · ' + f(fl.utilisation) + '% util',
+      deeppress: f(sp.seaDp) + ' bar of sea · cake ' + f(fl.cakeMoisture, 1)
+        + '% · fines through ' + f(fl.bleed, 2) + ' t/h',
+      microwave: f(sp.mwPower, 1) + ' MW · cake ' + f(fl.cakeMoisture, 1) + '% · '
+        + f(fl.evap) + ' t/h boiled, ' + f(fl.trapLoss, 1) + ' lost',
+      eopress: f(sp.voltage) + ' V · ' + f(sp.belt) + '% belt · cake ' + f(fl.cakeMoisture, 1)
+        + '% · ' + f(fl.power) + ' kW',
+      none: '',
+    }[sh.filter], st('prs'));
     this.setTile('bin', f(t.cakeBin.pct) + ' %',
       f(t.cakeBin.mass) + ' t ' + (sh.dewater === 'dry' ? 'crushed' : 'wet') + ' at '
       + f(t.cakeBin.cw * 100, 1) + '% Cw', st('bin'));
     this.setTile('silo', f(t.silo.pct) + ' %',
       f(t.silo.mass) + ' t · drawing ' + f(t.silo.feedRate, 2) + ' t/h · '
-      + (u.binderType === 'slag' ? 'slag blend' : 'OPC'), st('silo'));
+      + u.binder.short, st('silo'));
     const m = t.mixer;
     this.setTile('mix', f(m.slump) + ' mm',
       f(m.cw * 100, 1) + '% Cw · ' + f(m.binderDose, 1) + '% binder · τy '
@@ -1081,8 +1118,9 @@ export class Scada {
     des.textContent = this.plant.up.deslime ? 'Deslime: IN' : 'Deslime: BYPASS';
     des.classList.toggle('on', this.plant.up.deslime);
     const bnd = this.lampStrip.get('binder') as HTMLButtonElement;
-    bnd.textContent = this.plant.up.binderType === 'slag' ? 'Binder: slag' : 'Binder: OPC';
-    bnd.classList.toggle('on', this.plant.up.binderType === 'slag');
+    const binder = binderIn(this.plant);
+    bnd.textContent = 'Binder: ' + binder.short;
+    bnd.classList.toggle('on', binder === this.sh.binders[1]);
 
     const pilot = (k: string, on: boolean, cls: string) => {
       const p = this.lampStrip.get(k)!;

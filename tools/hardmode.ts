@@ -3,6 +3,7 @@ import {
   upstream, feedEffects, mediaDraw, mediaEffect, DEFAULT_UPSTREAM, ORE,
 } from '../src/sim/upstream';
 
+const [OPC, SLAG] = DESIGN.binders;
 const f = (n: number, d = 1) => n.toFixed(d);
 const p = (n: number, w: number, d = 1) => f(n, d).padStart(w);
 
@@ -13,7 +14,7 @@ for (const mf of [250, 320, 420, 520, 620]) {
   console.log(
     p(mf, 10, 0), p(s.specificEnergy, 8, 1), p(s.p80, 10, 0),
     p(s.fines20 * 100, 9, 1), p(s.liberation * 100, 12, 0) + '%',
-    p(s.solids, 11, 0), p(s.sulphide, 6, 2), p(feedEffects(s, 'opc').ucs, 7, 2),
+    p(s.solids, 11, 0), p(s.sulphide, 6, 2), p(feedEffects(s, OPC).ucs, 7, 2),
   );
 }
 
@@ -24,7 +25,7 @@ for (const fr of [0, 10, 20, 28, 40, 60]) {
   console.log(
     p(fr, 9, 0), p(s.sulphideRecovery * 100, 9, 1) + '%', p(s.massPull, 10, 2) + '%',
     p(s.solids, 11, 0), p(s.sulphide, 10, 2),
-    p(feedEffects(s, 'opc').ucs, 13, 3), p(feedEffects(s, 'slag').ucs, 14, 3),
+    p(feedEffects(s, OPC).ucs, 13, 3), p(feedEffects(s, SLAG).ucs, 14, 3),
   );
 }
 
@@ -32,7 +33,7 @@ console.log('\n== Deslime cyclones: cut size vs what you keep ==');
 console.log('  kPa   d50c um   split %   tails t/h   <20um %   filter x   moist x   tauY x   UCS x');
 for (const P of [0, 50, 80, 110, 160, 220]) {
   const s = upstream({ ...DEFAULT_UPSTREAM, deslime: P > 0, cyclonePressure: P || 110 }, true);
-  const e = feedEffects(s, 'opc');
+  const e = feedEffects(s, OPC);
   console.log(
     p(P, 5, 0), p(s.d50c, 9, 1), p(s.deslimeSplit * 100, 9, 1), p(s.solids, 11, 0),
     p(s.fines20 * 100, 9, 1), p(e.filterCapacity, 10, 2), p(e.cakeMoisture, 9, 2),
@@ -47,7 +48,7 @@ for (const hl of [1, 0.8, 0.6, 0.4, 0.2, 0]) {
   console.log(
     p(hl, 8, 2), p(mediaEffect(hl).power * ORE.millPowerKw, 9, 0),
     p(s.workIndex, 8, 1), p(s.p80, 8, 0), p(s.liberation * 100, 12, 0) + '%',
-    p(s.sulphide, 10, 2), p(feedEffects(s, 'opc').ucs, 13, 3),
+    p(s.sulphide, 10, 2), p(feedEffects(s, OPC).ucs, 13, 3),
   );
 }
 const dayBin = mediaDraw(DEFAULT_UPSTREAM.millFeed, 4600 / DEFAULT_UPSTREAM.millFeed);

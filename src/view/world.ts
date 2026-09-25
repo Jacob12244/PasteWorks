@@ -19,7 +19,8 @@ import { buildSpace, LaunchFeed, MassDriver, PIT_HOLE } from './worlds/space';
 import { buildOcean, SeafloorLine, Furrow, FURROW_HOLE } from './worlds/ocean';
 import { buildCity } from './worlds/city';
 import { buildWaste, FillLine, Craters, CRATER_HOLE } from './worlds/waste';
-import { CycloneBank, Centrifuge } from './dewater';
+import { CycloneBank, SpinRing, MagStack, type Dewaterer } from './dewater';
+import { DeepPress, MicrowaveDrier, EOPress, type Filterer } from './filters';
 import { CollectorFront, ReclaimFront, ScoopFront } from './fronts';
 import { sheet, type Sheet } from '../scenario/flowsheet';
 import { Deliveries } from './deliveries';
@@ -485,20 +486,25 @@ export class World {
     const pumpX = MIX.x + Mixer.DISCHARGE_X - PastePump.HOPPER_X;
 
     // Dewatering is whatever this site can use: a thickener where there is
-    // gravity to settle in, cyclones on the seabed, decanters on an asteroid -
-    // and nothing at all where the feed is dry. No dewatering, no surge tank,
-    // no press.
+    // gravity to settle in, cyclones on the seabed, a spin ring on an
+    // asteroid, a magnetic stack where there is no floor - and nothing at all
+    // where the feed is dry. No dewatering, no surge tank, no press.
     let ofStart = V(-52 + DESIGN.thickenerDia / 2 + 3.4 + 2.75, 5.8, 0);
+    let feedIn: THREE.Vector3 | null = null;
     if (sh.dewater === 'thickener') place(new Thickener(), -52, 0);
-    else if (sh.dewater === 'cyclones') {
-      const u = place(new CycloneBank(), -52, 0) as CycloneBank;
+    else if (sh.dewater !== 'dry') {
+      const u = place(sh.dewater === 'cyclones' ? new CycloneBank()
+        : sh.dewater === 'spinring' ? new SpinRing() : new MagStack(), -52, 0) as Dewaterer;
       ofStart = u.ofOut.clone().add(V(-52, 0, 0));
-    } else if (sh.dewater === 'centrifuge') {
-      const u = place(new Centrifuge(), -52, 0) as Centrifuge;
-      ofStart = u.ofOut.clone().add(V(-52, 0, 0));
+      if (u.feedIn) feedIn = u.feedIn.clone().add(V(-52, 0, 0));
     }
     if (sh.hasSurge) place(new SurgeTank(this.fx), SITE.surge.x, SITE.surge.z);
-    if (sh.hasPress) place(new PlatePress(), -10, 0);
+    // And the second stage: a plate press, or what this world has instead.
+    const filter: Filterer | null = sh.filter === 'deeppress' ? new DeepPress()
+      : sh.filter === 'microwave' ? new MicrowaveDrier()
+      : sh.filter === 'eopress' ? new EOPress()
+      : null;
+    if (sh.hasPress) place(filter ?? new PlatePress(), -10, 0);
     place(new CakeBin(hood.clone().sub(V(SITE.cakeBin.x, 0, 0))), SITE.cakeBin.x, 0);
     place(new BinderSilo(V(hood.x - 0.6 - SITE.silo.x, hood.y - 0.7, -1.3 - SITE.silo.z)),
       SITE.silo.x, SITE.silo.z);
@@ -538,7 +544,7 @@ export class World {
         place(this.underground, 0, 0);
     }
 
-    this.buildLinks(sh, ofStart);
+    this.buildLinks(sh, ofStart, feedIn, filter);
     this.buildServices();
 
     // Where a delivery lands: at the foot of the silo for a truck or a pad,
@@ -571,8 +577,16 @@ export class World {
     };
   }
 
-  /** The interconnecting pipework that makes it read as one flowsheet. */
-  private buildLinks(sh: Sheet, ofStart: THREE.Vector3) {
+  /**
+   * The interconnecting pipework that makes it read as one flowsheet.
+   * @param feedIn where a newer dewatering unit takes its feed, world
+   * @param filter a newer second stage, which says where its feed and
+   *   filtrate go; today's plate press keeps the routes it always had
+   */
+  private buildLinks(
+    sh: Sheet, ofStart: THREE.Vector3, feedIn: THREE.Vector3 | null, filter: Filterer | null,
+  ) {
+    const at = (p: THREE.Vector3) => p.clone().add(filter!.group.position);
     const link = (
       kind: string, colour: number, radius: number, pts: THREE.Vector3[], intensity = 1.5,
     ) => {
@@ -596,8 +610,10 @@ export class World {
     // feedwell, beside the drive house and into the feedwell off-centre.
     link('feed', C.tails, 0.4, sh.dewater === 'cyclones' ? [
       V(-84, 15, 0), V(-74, 15, 0), V(-62, 15, 0), V(-55.4, 14.8, 0), V(-52.4, 12.4, 0),
-    ] : sh.dewater === 'centrifuge' ? [
-      V(-84, 15, 0), V(-74, 15, 0), V(-64, 12.4, 0), V(-59, 8.4, 0), V(-57.6, 7.2, 0),
+    ] : feedIn ? [
+      // off the bridge and over to wherever this machine takes its feed in
+      V(-84, 15, 0), V(-74, 15, 0), V(-64, Math.max(15, feedIn.y + 0.4), 0),
+      V(feedIn.x - 3, feedIn.y + 0.4, feedIn.z), feedIn,
     ] : [
       V(-84, 15, 0), V(-74, 15, 0), V(-67, 14.6, -0.6), V(-63.4, 10.2, -1.6),
       V(-58, 8.0, -1.6), V(-53.4, 8.0, -1.6), V(-52.9, 6.3, -1.6),
@@ -619,8 +635,14 @@ export class World {
       V(sx - 5.2, 14.4, sz - 2.4), V(sx - 0.2, 14.4, sz - 2.4), V(sx, 13.0, sz - 2.4),
     ]);
 
-    // surge tank -> press feed
-    if (sh.hasPress) link('press', C.thickUf, 0.26, [
+    // surge tank -> press feed, landing wherever this site's second stage
+    // takes it in
+    if (filter) {
+      const fi = at(filter.feedIn);
+      link('press', C.thickUf, 0.26, [
+        V(-30, 2.4, 7), V(-25, 2.2, 5), V(-20, 3.2, 0), V(fi.x - 4, fi.y - 0.15, fi.z), fi,
+      ]);
+    } else if (sh.hasPress) link('press', C.thickUf, 0.26, [
       V(-30, 2.4, 7), V(-25, 2.2, 5), V(-20, 3.2, 0), V(-17, 6.4, -1.8), V(-13, 6.55, -1.8),
     ]);
 
@@ -640,8 +662,9 @@ export class World {
       this.root.add(s);
     }
 
-    // filtrate -> process water
-    link('filtrate', C.water, 0.18, [
+    // filtrate -> process water, the way the second stage sends it
+    if (filter) link('filtrate', C.water, 0.18, filter.filtrateRoute.map(at), 0.75);
+    else if (sh.hasPress) link('filtrate', C.water, 0.18, [
       V(-3.5, 6.4, 1.8), V(-2.0, 8.2, 6), V(-1.2, 8.4, 11), V(-1.6, 7.6, 14.2),
     ], 0.75);
 

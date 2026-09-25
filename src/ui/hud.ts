@@ -1,10 +1,11 @@
 import type { Plant, Telemetry } from '../sim/plant';
-import { DESIGN } from '../sim/plant';
+import { DESIGN, kitNames } from '../sim/plant';
 import { ORE } from '../sim/upstream';
 import type { Scenario } from '../scenario';
 import { sheet, type Sheet } from '../scenario/flowsheet';
 import {
   SliderSpec, bagValue, setBagValue, shown, upstreamSliders, plantSliders,
+  swapBinder, binderIn,
 } from './setpoints';
 
 const el = <K extends keyof HTMLElementTagNameMap>(
@@ -171,10 +172,6 @@ export class HUD {
     return p;
   }
 
-  private dewaterName() {
-    return { thickener: 'thickener', cyclones: 'cyclones', centrifuge: 'decanters', dry: 'mixer' }[this.sh.dewater];
-  }
-
   private alarms() {
     const p = el('div', 'panel');
     p.id = 'alarms';
@@ -204,16 +201,15 @@ export class HUD {
     if (this.sh.hasDeslime) upToggles.append(this.deslimeBtn);
 
     this.binderBtn = el('button');
-    this.binderBtn.onclick = () => {
-      this.plant.up.binderType = this.plant.up.binderType === 'opc' ? 'slag' : 'opc';
-    };
+    this.binderBtn.onclick = () => swapBinder(this.plant);
+    this.binderBtn.title = this.sh.binders.map((b) => b.name + ': ' + b.hint).join('\n');
     upToggles.append(this.binderBtn);
 
     this.upSection.append(upToggles);
     b.append(this.upSection);
 
     // ---- backfill plant ---------------------------------------------------
-    const from = this.sh.dewater === 'dry' ? 'dry mix' : this.dewaterName();
+    const from = this.sh.dewater === 'dry' ? 'dry mix' : kitNames().settler;
     b.append(el('div', 'sect', 'Backfill plant<em>' + from + ' to '
       + this.sc.names.destButton.toLowerCase() + '</em>'));
     for (const s of plantSliders()) b.append(this.slider(s));
@@ -403,17 +399,26 @@ export class HUD {
     const up = this.plant.up;
     this.deslimeBtn.textContent = up.deslime ? 'Deslime: IN circuit' : 'Deslime: bypassed';
     this.deslimeBtn.classList.toggle('on', up.deslime);
-    this.binderBtn.textContent = up.binderType === 'slag' ? 'Binder: slag blend' : 'Binder: OPC';
-    this.binderBtn.classList.toggle('on', up.binderType === 'slag');
+    const binder = binderIn(this.plant);
+    this.binderBtn.textContent = 'Binder: ' + binder.short;
+    this.binderBtn.classList.toggle('on', binder === this.sh.binders[1]);
     const cp = this.ctls.get('cyclonePressure');
     if (cp) cp.style.opacity = up.deslime ? '1' : '0.35';
     this.ctls.get('frother')?.classList.toggle('flag',
-      t.upstream.sulphide > 0.9 && up.binderType === 'opc');
+      t.upstream.sulphide > 0.9 && binder.sulphate > 0.15);
     this.ctls.get('millFeed')?.classList.toggle('flag',
       t.upstream.solids < t.upstream.plantCapacity * 0.92);
 
-    // flag setpoints that are being over-ridden by physics
-    this.ctls.get('ufCw')?.classList.toggle('flag', this.plant.sp.ufCw > t.thickener.maxUfCw + 0.002);
+    // flag setpoints that are being over-ridden by physics, or are behind a standing alarm
+    const st = this.plant.standing;
+    const flag = (key: string, on: boolean) => this.ctls.get(key)?.classList.toggle('flag', on);
+    flag('ufCw', this.plant.sp.ufCw > t.thickener.maxUfCw + 0.002);
+    flag('spin', st.has('rake-high') || st.has('rake-trip') || st.has('thk-rise'));
+    flag('field', st.has('rake-high') || st.has('rake-trip') || st.has('thk-rise'));
+    flag('mwPower', st.has('trap'));
+    flag('seaDp', st.has('bleed'));
+    flag('grate', st.has('crusher-choked'));
+    flag('rotor', st.has('steel'));
     this.ctls.get('targetSlump')!.classList.toggle('flag', t.mixer.waterLimited);
     this.ctls.get('strokeRate')!.classList.toggle('flag', t.pump.starved || t.pump.pressureLimited);
 
@@ -475,11 +480,14 @@ export class HUD {
           );
           if (sh.source === 'scoop') {
             rows.push(
+              ['Rotor / grate', f(this.plant.up.rotor, 0) + ' rpm  ·  ' + f(this.plant.up.grate, 1) + ' mm'],
+              ['Crusher passes', f(u.crushed, 0) + ' of ' + f(u.crusherCap, 0) + ' t/h the grate allows'],
               ['Crusher product P80', f(u.p80, 0) + ' µm'],
               ['Hammer store', f(t.media.stock, 1) + ' t  (' + (Number.isFinite(t.media.hoursLeft)
                 ? f(t.media.hoursLeft, 0) + ' h left)' : 'idle)')],
-              ['Hammer condition', f(t.media.health * 100, 0) + '%'],
-              ['Scrap pulled', f(u.concentrate, 1) + ' t/h'],
+              ['Hammer condition', f(t.media.health * 100, 0) + '%  ·  wearing ×' + f(u.duty, 2)],
+              ['Steel freed', f(u.sulphideRecovery * 100, 0) + '%  (' + f(u.concentrate, 1) + ' t/h pulled)'],
+              ['Tramp steel in the fill', f(u.steel, 2) + '%'],
             );
           } else {
             rows.push(['Material P80', f(u.p80, 0) + ' µm, as it comes']);
@@ -495,7 +503,7 @@ export class HUD {
             ['Sent back', f(u.toTsf + u.bypassToTsf, 0) + ' t/h'],
             ['Tailings < 20 µm', f(u.fines20 * 100, 1) + '%'],
           );
-          if (sh.hasPress) rows.push(['— press capacity', '×' + f(u.effects.filterCapacity, 2)]);
+          if (sh.hasPress) rows.push(['— ' + kitNames().filter + ' capacity', '×' + f(u.effects.filterCapacity, 2)]);
           rows.push(
             ['— yield stress', '×' + f(u.effects.yieldStress, 2)],
             ['— 28 d strength', '×' + f(u.effects.ucs, 2)],
@@ -506,11 +514,12 @@ export class HUD {
               + 'cyclones buy that back, and send what they reject up the riser.'
             : sh.source === 'reclaim'
             ? 'A century-old dam: pyritic tailings that have been oxidising in the rain '
-              + 'since before the towers went up. On ordinary portland the sulphate eats '
-              + 'the strength. The slag blend is not optional here.'
-            : 'Crushed waste is coarse and dry. Coarse binds well and pumps easily; dry '
-              + 'means every litre of mix water came off a tanker. Worn hammers push the '
-              + 'product coarser still.';
+              + 'since before the towers went up. The acid dissolves calcite, so bio-cement '
+              + 'loses a third of its strength to it; carbon-cured magnesia does not care.'
+            : 'Crushed waste is coarse and dry. Coarse binds well and pumps easily - but '
+              + 'the magnet can only pull steel the crusher has broken free, and steel left '
+              + 'in the fill rusts it apart. Spin the rotor up to crack it loose, or close the '
+              + 'grate to crush finer, and pay for it in hammers or in tonnes.';
           break;
         }
         rows.push(
@@ -552,11 +561,11 @@ export class HUD {
             + 'draws less power and loses its top size, the product creeps '
             + 'coarser, and coarse ore does not liberate - the sulphide walks '
             + 'out with the tailings and attacks the binder. Order media.'
-          : u.sulphide > 0.9 && u.binderType === 'opc'
+          : u.sulphide > 0.9 && u.binder.sulphate > 0.15
           ? 'Sulphide is attacking the binder. Either lift the frother to float '
             + 'more of it out, or move to a slag blend that resists it — the slag '
-            + 'costs $' + (DESIGN.costBinder * DESIGN.slagPremium).toFixed(0)
-            + '/t against $' + DESIGN.costBinder + '/t for OPC.'
+            + 'costs $' + sh.binders[1].price.toFixed(0)
+            + '/t against $' + sh.binders[0].price.toFixed(0) + '/t for OPC.'
           : sh.separation === 'magnetic'
           ? 'Grind fine enough to free the metal and the drum pulls it; grind coarser '
             + 'and it leaves in the tailings - which is a waste of iron-nickel but '
@@ -569,42 +578,58 @@ export class HUD {
       }
       case 'thickener': {
         const th = t.thickener;
-        if (this.sh.dewater !== 'thickener') {
-          const cyc = this.sh.dewater === 'cyclones';
+        const dw = this.sh.dewater;
+        if (dw === 'cyclones') {
           rows.push(
             ['Feed', f(t.feed.solids, 0) + ' t/h dry @ ' + f(t.upstream.cw * 100, 0) + '%'],
-            [cyc ? 'Underflow' : 'Cake', f(th.underflow.solids, 0) + ' t/h @ ' + f(th.ufCw * 100, 1) + '% Cw'],
+            ['Underflow', f(th.underflow.solids, 0) + ' t/h @ ' + f(th.ufCw * 100, 1) + '% Cw'],
             ['Most it will make', f(th.maxUfCw * 100, 1) + '%'],
             ['Fines to overflow', f(th.overflow.solids, 2) + ' t/h'],
             ['Overflow solids', f(th.overflowClarity, 0) + ' mg/L'],
             ['Bypassed', f(t.upstream.bypassToTsf, 0) + ' t/h'],
           );
-          if (!cyc) rows.push(['Scroll torque', f(th.torque, 0) + '%']);
-          note = cyc
-            ? 'No bed, no rakes, no storage: a cyclone bank makes its underflow as the '
-              + 'feed arrives. Tighter spigots mean a denser underflow and more fines out of '
-              + 'the top - and out of the top, down here, is the sea.'
-            : 'A thickener settles under gravity, and there is almost none here. The '
-              + 'decanter spins the tailings at a few thousand g instead. Polymer buys a '
-              + 'drier cake and a cleaner centrate; the scroll torque tells you when you '
-              + 'have asked for too much.';
+          note = 'No bed, no rakes, no storage: a cyclone bank makes its underflow as the '
+            + 'feed arrives. Tighter spigots mean a denser underflow and more fines out of '
+            + 'the top - and out of the top, down here, is the sea.';
           break;
         }
+        rows.push(['Feed', f(t.feed.solids, 0) + ' t/h dry @ ' + f(t.upstream.cw * 100, 0) + '%']);
+        if (dw === 'spinring') {
+          rows.push(
+            ['Ring speed', f(this.plant.sp.spin, 1) + ' rpm  →  ' + f(th.g, 2) + ' g at the rim'],
+            ['Drive and bearings', f(th.power, 0) + ' kW'],
+          );
+        } else if (dw === 'magstack') {
+          rows.push(
+            ['Coil field', f(th.field, 2) + ' T'],
+            ['Coil draw', f(th.power, 0) + ' kW  ·  $' + f((th.power * DESIGN.costPowerKwh), 0) + '/h'],
+          );
+        } else {
+          rows.push(['Tailings P80', f(t.upstream.p80, 0) + ' µm, '
+            + f(t.upstream.fines20 * 100, 0) + '% < 20 µm']);
+        }
         rows.push(
-          ['Feed', f(t.feed.solids, 0) + ' t/h dry @ ' + f(t.upstream.cw * 100, 0) + '%'],
-          ['Tailings P80', f(t.upstream.p80, 0) + ' µm, '
-            + f(t.upstream.fines20 * 100, 0) + '% < 20 µm'],
           ['Underflow', f(th.underflow.solids, 0) + ' t/h @ ' + f(th.ufCw * 100, 1) + '% Cw'],
-          ['Max U/F at this floc', f(th.maxUfCw * 100, 1) + '%'],
+          ['Most it will make', f(th.maxUfCw * 100, 1) + '%'],
           ['Bed inventory', f(th.bed, 0) + ' t  (' + f(th.bedPct, 0) + '%)'],
           ['Rise rate', f(th.riseRate, 2) + ' / ' + f(th.riseLimit, 2) + ' m/h'],
-          ['Rake torque', f(th.torque, 0) + '%'],
+          [this.sh.torque.label, f(th.torque, 0) + '%'],
           ['Overflow clarity', f(th.overflowClarity, 0) + ' mg/L'],
           ['Solids to overflow', f(th.overflow.solids, 1) + ' t/h'],
         );
-        note = 'Rise rate above the settling flux floats the bed and you lose solids '
-          + 'over the launder. More flocculant raises both the flux and the density '
-          + 'you can pull — up to a point, and it is not cheap.';
+        note = dw === 'spinring'
+          ? 'A thickener needs gravity, so this one makes its own: ω²r at the rim of a '
+            + 'spinning ring. Faster settles quicker and packs denser. But a ring carrying '
+            + 'a heavy, uneven bed wobbles as the square of its speed, so keep the bed '
+            + 'drawn down if you want to spin it hard.'
+          : dw === 'magstack'
+          ? 'Magnetite-seeded flocs, pulled down a column of coils: a thickener\'s work in '
+            + 'a tenth of its floor, which is all the floor there is. Too little field and '
+            + 'the flocs go out of the top. The coils draw the square of the field, at the '
+            + 'city\'s price, and a denser underflow is a drier cake off the e-press.'
+          : 'Rise rate above the settling flux floats the bed and you lose solids '
+            + 'over the launder. More flocculant raises both the flux and the density '
+            + 'you can pull — up to a point, and it is not cheap.';
         break;
       }
       case 'surge':
@@ -613,24 +638,78 @@ export class HUD {
           ['Level', f(t.ufTank.pct, 0) + '%'],
           ['Density', f(t.ufTank.cw * 100, 1) + '% solids'],
         );
-        note = 'The buffer that lets the ' + this.dewaterName() + ' and the press run at different '
-          + 'rates. Empty it and the press starves; fill it and '
-          + (this.sh.hasThickener ? 'the bed builds.' : 'the excess goes past the plant.');
+        note = 'The buffer that lets the ' + kitNames().settler + ' and the ' + kitNames().filter
+          + ' run at different rates. Empty it and the ' + kitNames().filter + ' starves; fill it and '
+          + (this.sh.hasBed ? 'the bed builds.' : 'the excess goes past the plant.');
         break;
       case 'press': {
         const fl = t.filter;
-        rows.push(
-          ['Cycle time', f(fl.cycleTime, 1) + ' min'],
-          ['Capacity', f(fl.capacity, 0) + ' t/h dry'],
-          ['Throughput', f(fl.throughput, 0) + ' t/h dry'],
-          ['Utilisation', f(fl.utilisation, 0) + '%'],
-          ['Cake moisture', f(fl.cakeMoisture, 1) + '%'],
-          ['Cake solids', f((1 - fl.cakeMoisture / 100) * 100, 1) + '% Cw'],
-          ['Filtrate', f(fl.filtrate.water, 0) + ' t/h to process water'],
-        );
-        note = 'Capacity falls as 1/√(cycle time) while cake moisture falls with it. '
-          + 'Drier cake is the only way to reach a high-strength paste — but a long '
-          + 'cycle will not keep the pump fed.';
+        const sp = this.plant.sp;
+        const money = (kw: number) => '$' + f(kw * DESIGN.costPowerKwh, 0) + '/h';
+        switch (this.sh.filter) {
+          case 'deeppress':
+            rows.push(
+              ['Sea differential', f(sp.seaDp, 0) + ' bar of the 440 outside'],
+              ['Capacity', f(fl.capacity, 0) + ' t/h dry'],
+              ['Throughput', f(fl.throughput, 0) + ' t/h dry  (' + f(fl.utilisation, 0) + '%)'],
+              ['Cake moisture', f(fl.cakeMoisture, 1) + '%'],
+              ['Filtrate', f(fl.filtrate.water, 0) + ' t/h back out to sea'],
+              ['Pumping it out', f(fl.power, 0) + ' kW  ·  ' + money(fl.power)],
+              ['Fines through the cloth', f(fl.bleed, 2) + ' t/h  ·  $'
+                + f(fl.bleed * DESIGN.costPlume, 0) + '/h in plume'],
+            );
+            note = 'The cake sits between 440 bar of seabed and a hull at one atmosphere, '
+              + 'and the valve decides how much of that you let across it. Filtration goes '
+              + 'as the square root of the pressure, so doubling it buys 40% more cake - '
+              + 'and every litre of filtrate has to be pumped back out against the same sea. '
+              + 'Past about 150 bar the fines start coming through the cloth.';
+            break;
+          case 'microwave':
+            rows.push(
+              ['Magnetrons', f(sp.mwPower, 1) + ' MW  ·  drawing ' + f(fl.power / 1000, 1) + ' MW'],
+              ['Belt speed', f(sp.belt, 0) + '%  ·  ' + f(fl.capacity, 0) + ' t/h dry at most'],
+              ['Energy into the cake', f(fl.energy, 0) + ' kWh/t'],
+              ['Throughput', f(fl.throughput, 0) + ' t/h dry'],
+              ['Cake moisture', f(fl.cakeMoisture, 1) + '%'],
+              ['Water boiled off', f(fl.evap, 1) + ' t/h'],
+              ['Past the cold trap', f(fl.trapLoss, 1) + ' t/h  ·  $'
+                + f(fl.trapLoss * DESIGN.costWaterLost, 0) + '/h into space'],
+            );
+            note = 'In a vacuum, water does not need asking twice: the microwaves heat it and '
+              + 'it boils straight off the belt. The cold trap in the asteroid\'s shadow '
+              + 'freezes the vapour back out and sends it round again - until it frosts '
+              + 'over faster than it is scraped, and the rest goes to space. The slower the '
+              + 'belt, the more of the microwaves each tonne gets.';
+            break;
+          case 'eopress':
+            rows.push(
+              ['Electrode voltage', f(sp.voltage, 0) + ' V'],
+              ['Belt speed', f(sp.belt, 0) + '%  ·  ' + f(fl.capacity, 0) + ' t/h dry at most'],
+              ['Energy into the cake', f(fl.energy, 1) + ' kWh/t'],
+              ['Electrical load', f(fl.power, 0) + ' kW  ·  ' + money(fl.power)],
+              ['Throughput', f(fl.throughput, 0) + ' t/h dry'],
+              ['Cake moisture', f(fl.cakeMoisture, 1) + '%'],
+              ['Filtrate', f(fl.filtrate.water, 0) + ' t/h to process water'],
+            );
+            note = 'A belt press on its own makes a poor, wet cake. Put a field across it and '
+              + 'the water is dragged through the cake to the cathode - electro-osmosis. The '
+              + 'energy goes as the square of the voltage, and the pyrite\'s salts make the pore '
+              + 'water conduct, so the city\'s power bill does the rest of the squeezing.';
+            break;
+          default:
+            rows.push(
+              ['Cycle time', f(fl.cycleTime, 1) + ' min'],
+              ['Capacity', f(fl.capacity, 0) + ' t/h dry'],
+              ['Throughput', f(fl.throughput, 0) + ' t/h dry'],
+              ['Utilisation', f(fl.utilisation, 0) + '%'],
+              ['Cake moisture', f(fl.cakeMoisture, 1) + '%'],
+              ['Cake solids', f((1 - fl.cakeMoisture / 100) * 100, 1) + '% Cw'],
+              ['Filtrate', f(fl.filtrate.water, 0) + ' t/h to process water'],
+            );
+            note = 'Capacity falls as 1/√(cycle time) while cake moisture falls with it. '
+              + 'Drier cake is the only way to reach a high-strength paste — but a long '
+              + 'cycle will not keep the pump fed.';
+        }
         break;
       }
       case 'cakebin':
@@ -643,17 +722,20 @@ export class HUD {
         note = 'Cake solids here set the ceiling on paste density — you can add '
           + 'water at the mixer, never take it out.';
         break;
-      case 'silo':
+      case 'silo': {
+        const b = t.upstream.binder;
         rows.push(
+          ['Binder', b.name + ' at $' + f(b.price, 0) + '/t'],
           ['Inventory', f(t.silo.mass, 0) + ' t of ' + DESIGN.siloCap],
           ['Draw rate', f(t.silo.feedRate, 2) + ' t/h'],
           ['Dose', f(t.mixer.binderDose, 2) + '% of dry tails'],
           ['Binder spend', money(t.cost.binder)],
           ['Hours to empty', t.silo.feedRate > 0.01 ? f(t.silo.mass / t.silo.feedRate, 1) + ' h' : '—'],
         );
-        note = 'Binder is the dominant operating cost and the only real lever on '
-          + 'strength. Over-dosing a whole stope is an expensive way to be safe.';
+        note = b.hint + ' Binder is the only real lever on strength, and over-dosing a '
+          + 'whole fill is an expensive way to be safe.';
         break;
+      }
       case 'mixer': {
         const m = t.mixer;
         rows.push(
@@ -669,8 +751,9 @@ export class HUD {
           ['Predicted UCS', f(m.ucs, 0) + ' kPa at 28 d'],
         );
         note = m.waterLimited
-          ? 'The cake is already drier than this slump target needs. Shorten the '
-            + 'press cycle for wetter cake, or ask for a stiffer paste.'
+          ? 'The cake is wetter than this slump target allows - you can add water at '
+            + 'the mixer but never take it out. Dry the cake harder at the '
+            + kitNames().filter + ', or ask for a wetter paste.'
           : 'Slump is the yield stress read off a 200 mm cylinder, via Boger '
             + '(Pashias et al. 1996). The cylinder is what a paste plant '
             + 'actually measures - it is repeatable on a stiff paste where a '
@@ -736,21 +819,26 @@ export class HUD {
         note = this.sc.names.why;
         break;
       }
-      case 'water':
+      case 'water': {
+        const k = kitNames();
+        const settler = k.settler[0].toUpperCase() + k.settler.slice(1);
         rows.push(
-          [this.sh.dewater === 'centrifuge' ? 'Centrate'
-            : this.sh.dewater === 'cyclones' ? 'Cyclone overflow' : 'Thickener overflow',
-          f(t.thickener.overflow.water, 0) + ' t/h'],
-          ['Filtrate', f(t.filter.filtrate.water, 0) + ' t/h'],
+          [settler + ' overflow', f(t.thickener.overflow.water, 0) + ' t/h'],
+          [this.sh.filter === 'microwave' ? 'Melted off the cold trap' : 'Filtrate',
+            f(t.filter.filtrate.water, 0) + ' t/h'],
+        );
+        if (this.sh.filter === 'microwave') rows.push(['Lost to space', f(t.filter.trapLoss, 1) + ' t/h']);
+        rows.push(
           ['Mixer make-up', f(t.mixer.mixWater, 1) + ' m³/h'],
           ['Water spend', money(t.cost.water)
-            + (DESIGN.costWaterLost > 0 ? '  ($' + DESIGN.costWaterLost + '/m³ lost in the fill)' : '')],
+            + (DESIGN.costWaterLost > 0 ? '  ($' + DESIGN.costWaterLost + '/m³ lost)' : '')],
         );
         note = this.sh.dewater === 'dry'
           ? 'There is no water here to take out. Every cubic metre in the mix was hauled in.'
-          : 'Almost all the water taken out at the ' + this.dewaterName() + ' and the press goes '
+          : 'Almost all the water taken out at the ' + k.settler + ' and the ' + k.filter + ' goes '
             + 'back to the mill. What the mixer adds is the only real consumption.';
         break;
+      }
     }
 
     this.inspectBody.innerHTML = '';

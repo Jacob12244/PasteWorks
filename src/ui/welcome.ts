@@ -154,7 +154,7 @@ export class Welcome {
       el('h1', undefined, 'Imagine how mining and materials transport could look in the future.'),
       el('p', undefined, 'A working paste backfill plant &mdash; thickener, filter press, mixer, '
         + 'pump and pipe, every number computed rather than animated &mdash; set down in '
-        + 'five places it might one day have to run. Pick one.'),
+        + 'five places it might one day have to run, and re-equipped for each. Pick one.'),
     );
     this.root.append(head);
 

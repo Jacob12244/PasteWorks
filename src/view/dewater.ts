@@ -4,18 +4,22 @@
  *
  *   CycloneBank   on the seabed - no settling tank makes sense when the whole
  *                 site is underwater, so the water comes out inline.
- *   Centrifuge    on Psyche - a thickener settles under gravity, and at
- *                 0.015 g there is none worth having. Decanters spin the
- *                 tailings at a few thousand g instead.
+ *   SpinRing      on Psyche - a thickener settles under gravity, and at
+ *                 0.015 g there is none worth having, so this one is built
+ *                 inside a ring and spun until it makes its own.
+ *   MagStack      under Meridian - there is no floor for an 18 m tank in a
+ *                 canyon a block wide, so seeded flocs are pulled down a
+ *                 column of coils instead.
  *
- * Both are the unit with id 'thickener', so the consoles treat them as the
- * dewatering stage without having to know which one it is. Both expose where
- * their underflow and overflow leave, so the site pipework lands on them.
+ * All three are the unit with id 'thickener', so the consoles treat them as
+ * the dewatering stage without having to know which one it is. Each exposes
+ * where its underflow and overflow leave, so the site pipework lands on them.
  */
 import * as THREE from 'three';
 import type { Telemetry } from '../sim/plant';
-import { C, metal, matte, glow, glowUnique } from './palette';
-import { box, cyl, tube, strip, platform, ladder, LevelBar, Beacon } from './parts';
+import { DESIGN } from '../sim/plant';
+import { C, metal, matte, glow, glowUnique, glass, liquor } from './palette';
+import { box, cyl, tube, platform, ladder, LevelBar, Beacon } from './parts';
 import { flowMaterial, setFlow, bandsFor, FlowMaterial } from './flow';
 import { FX, Spout } from './particles';
 import { Unit } from './units';
@@ -25,6 +29,8 @@ export interface Dewaterer extends Unit {
   ufOut: THREE.Vector3;
   /** where the overflow (or centrate) leaves, local */
   ofOut: THREE.Vector3;
+  /** where the feed arrives, local - the cyclone bank's route predates this */
+  feedIn?: THREE.Vector3;
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -153,123 +159,448 @@ export class CycloneBank extends Unit implements Dewaterer {
   }
 }
 
-// ============================================================== CENTRIFUGE
+// =============================================================== SPIN RING
 
-export class Centrifuge extends Unit implements Dewaterer {
+/**
+ * A thickener built inside a spinning ring, for a site with no gravity worth
+ * settling in. The ring turns at its real speed - ten rpm is a revolution
+ * every six seconds - and the solids pack against the outer wall, where the
+ * gravity is. Its top is glass, because an open channel in a vacuum would
+ * boil dry; through it you can see the bed build against the rim.
+ *
+ * Feed goes in at the crown and both products come out through a rotary
+ * union in the mast. Load it with a heavy, uneven bed and spin it hard, and
+ * it wobbles.
+ */
+export class SpinRing extends Unit implements Dewaterer {
   readonly id = 'thickener';
-  readonly name = 'Decanter Centrifuges';
+  readonly name = 'Spin-Ring Thickener';
+  feedIn = new THREE.Vector3(0, 13.4, 0);
   ufOut = new THREE.Vector3(0, 0.7, 0);
-  ofOut = new THREE.Vector3(9.0, 5.2, 0);
+  /** out of the crown, above the spokes - anything lower is in their way */
+  ofOut = new THREE.Vector3(2.2, 9.8, 0);
 
-  private bowls: THREE.Group[] = [];
-  private stripes: THREE.MeshStandardMaterial;
+  /** turns at the ring's rpm */
+  private rotor = new THREE.Group();
+  /** tilts the rotor when it is out of balance */
+  private wobble = new THREE.Group();
+  private liquorMat: THREE.MeshStandardMaterial;
+  private bed: THREE.Mesh;
+  private bedW = -1;
+  private lamps: THREE.MeshStandardMaterial;
+  private union: THREE.MeshStandardMaterial;
   private ufFlow: FlowMaterial;
   private ofFlow: FlowMaterial;
   private bar: LevelBar;
   private beacon = new Beacon();
+  private angle = 0;
+
+  private readonly R = DESIGN.ringRadius;
+  private readonly Y = 7.4;
+  /** inner and outer walls of the settling channel */
+  private readonly RI = DESIGN.ringRadius - 1.3;
+  private readonly RO = DESIGN.ringRadius + 1.3;
 
   constructor() {
-    super('DECANTERS', 3.0);
+    super('SPIN RING', 3.0, '#ffab3d');
     const g = this.group;
-    const D = 3.2;
-    g.add(platform(18, 16, { y: D, accent: C.amber }));
+    const { Y, RI, RO } = this;
 
-    this.stripes = glowUnique(C.amber, 1.2);
-    // Three decanters in parallel: a conical bowl on a skid, spinning inside a
-    // housing with its top cut away so you can see it go round.
-    for (const z of [-5, 0, 5]) {
-      const skid = box(13, 0.6, 3.0, metal(C.steelDark, 0.55, 0.9));
-      skid.position.set(0, D + 0.4, z);
-      g.add(skid);
-      const housing = new THREE.Mesh(
-        new THREE.CylinderGeometry(1.3, 1.3, 10, 24, 1, true, 0, Math.PI * 1.35),
-        new THREE.MeshStandardMaterial({ color: 0x566273, roughness: 0.45, metalness: 0.85, side: THREE.DoubleSide }),
-      );
-      housing.rotation.z = Math.PI / 2;
-      housing.rotation.x = Math.PI * 0.82;
-      housing.position.set(0, D + 2.1, z);
-      g.add(housing);
-
-      const bowl = new THREE.Group();
-      const cylPart = tube(1.0, 6, metal(0x9aa6b6, 0.25, 0.95), 24);
-      cylPart.rotation.z = Math.PI / 2;
-      cylPart.position.x = -1.5;
-      bowl.add(cylPart);
-      const conePart = cyl(1.0, 0.45, 3.2, metal(0x8c97a6, 0.3, 0.95), 24);
-      conePart.rotation.z = -Math.PI / 2;
-      conePart.position.x = 3.1;
-      bowl.add(conePart);
-      for (let k = 0; k < 4; k++) {
-        const st = box(6, 0.08, 0.12, this.stripes);
-        st.position.set(-1.5, Math.cos((k * Math.PI) / 2) * 1.01, Math.sin((k * Math.PI) / 2) * 1.01);
-        st.rotation.x = (k * Math.PI) / 2;
-        bowl.add(st);
-      }
-      bowl.position.set(0, D + 2.1, z);
-      g.add(bowl);
-      this.bowls.push(bowl);
-
-      // main drive and back drive
-      const motor = cyl(0.7, 0.7, 1.8, metal(0x3c4a5c, 0.4, 0.9), 18);
-      motor.rotation.z = Math.PI / 2;
-      motor.position.set(-6.6, D + 1.6, z);
-      g.add(motor);
-      const gear = box(1.2, 1.6, 1.6, metal(C.steelDark));
-      gear.position.set(5.6, D + 2.1, z);
-      g.add(gear);
-      // cake chute out of the narrow end, down through the deck
-      const chute = box(1.2, 2.0, 1.2, metal(C.steelDark));
-      chute.position.set(4.2, D + 0.2, z);
-      g.add(chute);
+    // ---- the static part: plinth, mast, raking struts, bearings --------
+    const pad = cyl(4.2, 4.6, 0.6, matte(C.concrete, 0.95), 8);
+    pad.position.y = 0.3;
+    g.add(pad);
+    const mast = cyl(0.8, 1.05, Y - 1.6, metal(C.steelLight, 0.45, 0.9), 20);
+    mast.position.y = (Y - 1.6) / 2 + 0.6;
+    g.add(mast);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      const foot = new THREE.Vector3(Math.cos(a) * 3.5, 0.6, Math.sin(a) * 3.5);
+      const head = new THREE.Vector3(Math.cos(a) * 1.25, Y - 2.1, Math.sin(a) * 1.25);
+      const len = foot.distanceTo(head);
+      const strut = box(0.32, len, 0.32, metal(C.steel, 0.6, 0.9));
+      strut.position.copy(foot).lerp(head, 0.5);
+      strut.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), head.clone().sub(foot).normalize());
+      g.add(strut);
     }
-    const lamp = strip(16, C.amber, 0.1, 1.8);
-    lamp.position.set(0, D + 0.1, 8);
-    g.add(lamp);
+    const lower = cyl(1.8, 1.8, 0.7, metal(C.steelDark, 0.5, 0.9), 28);
+    lower.position.y = Y - 1.9;
+    g.add(lower);
+    this.union = glowUnique(C.cyan, 1.6);
+    const unionRing = new THREE.Mesh(new THREE.TorusGeometry(1.82, 0.09, 8, 36), this.union);
+    unionRing.rotation.x = Math.PI / 2;
+    unionRing.position.y = Y - 1.6;
+    g.add(unionRing);
+    const crown = cyl(1.2, 1.5, 0.8, metal(C.steelDark, 0.5, 0.9), 24);
+    crown.position.y = Y + 2.0;
+    g.add(crown);
+    const feedDrop = tube(0.34, 13.4 - (Y + 2.4), metal(C.steelDark), 12);
+    feedDrop.position.y = (13.4 + Y + 2.4) / 2;
+    g.add(feedDrop);
 
-    this.ufFlow = flowMaterial(C.thickUf, { density: bandsFor(12), intensity: 1.6 });
-    const cakeLine = tube(0.36, 12, this.ufFlow, 14);
-    cakeLine.rotation.x = Math.PI / 2;
-    cakeLine.position.set(4.2, 0.7, 0);
-    g.add(cakeLine);
-    const drop = tube(0.36, D - 0.7, this.ufFlow, 14);
-    drop.position.set(0, (D - 0.7) / 2 + 0.7, 0);
-    g.add(drop);
-    const collector = box(4.6, 0.5, 0.8, metal(C.steelDark));
-    collector.position.set(2.1, 0.7, 0);
-    g.add(collector);
+    // ---- the rotor: channel, glass lid, liquor, bed, hub, spokes --------
+    // The channel is a lathe of its own cross-section: inner wall, floor,
+    // outer wall. The lid is glass.
+    const profile = [
+      new THREE.Vector2(RI, 1.1), new THREE.Vector2(RI, -0.9),
+      new THREE.Vector2(RI + 0.3, -1.1), new THREE.Vector2(RO - 0.3, -1.1),
+      new THREE.Vector2(RO, -0.9), new THREE.Vector2(RO, 1.1),
+    ];
+    const channel = new THREE.Mesh(
+      new THREE.LatheGeometry(profile, 96),
+      new THREE.MeshStandardMaterial({
+        color: 0x6b7280, roughness: 0.4, metalness: 0.9, side: THREE.DoubleSide,
+      }),
+    );
+    channel.castShadow = channel.receiveShadow = true;
+    this.rotor.add(channel);
+    const lid = new THREE.Mesh(new THREE.RingGeometry(RI, RO, 96, 1), glass(0xffe2b8, 0.12));
+    lid.rotation.x = -Math.PI / 2;
+    lid.position.y = 1.1;
+    this.rotor.add(lid);
+    for (const [r, y] of [[RO, 1.1], [RO, -0.9], [RI, 1.1]] as const) {
+      const hoop = new THREE.Mesh(new THREE.TorusGeometry(r, 0.12, 8, 96), metal(C.steelDark, 0.5, 0.9));
+      hoop.rotation.x = Math.PI / 2;
+      hoop.position.y = y;
+      this.rotor.add(hoop);
+    }
 
-    this.ofFlow = flowMaterial(C.water, { density: bandsFor(9), intensity: 1.0 });
-    const centrate = tube(0.28, 9, this.ofFlow, 12);
-    centrate.rotation.z = Math.PI / 2;
-    centrate.position.set(4.5, D + 2.0, -8.2);
-    g.add(centrate);
+    this.liquorMat = liquor(C.water, 0.9);
+    const surf = new THREE.Mesh(new THREE.RingGeometry(RI + 0.05, RO - 0.05, 96, 1), this.liquorMat);
+    surf.rotation.x = -Math.PI / 2;
+    surf.position.y = 0.55;
+    this.rotor.add(surf);
+    this.bed = new THREE.Mesh(new THREE.RingGeometry(RO - 0.3, RO - 0.05, 96, 1), liquor(C.tails, 1));
+    this.bed.rotation.x = -Math.PI / 2;
+    this.bed.position.y = 0.62;
+    this.rotor.add(this.bed);
+
+    // running lights round the rim, spaced so the turning reads from anywhere
+    this.lamps = glowUnique(C.amber, 1.8);
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const lamp = box(1.2, 0.22, 0.1, this.lamps);
+      lamp.position.set(Math.cos(a) * (RO + 0.06), 0.1, Math.sin(a) * (RO + 0.06));
+      lamp.rotation.y = -a + Math.PI / 2;
+      this.rotor.add(lamp);
+    }
+
+    const hub = cyl(1.45, 1.45, 3.2, metal(C.steelLight, 0.4, 0.9), 28);
+    this.rotor.add(hub);
+    const hubBand = new THREE.Mesh(new THREE.TorusGeometry(1.47, 0.08, 8, 32), this.lamps);
+    hubBand.rotation.x = Math.PI / 2;
+    this.rotor.add(hubBand);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const span = RI - 1.45;
+      const spoke = box(span, 0.42, 0.5, metal(C.steel, 0.5, 0.9));
+      spoke.position.set(Math.cos(a) * (1.45 + span / 2), -0.4, Math.sin(a) * (1.45 + span / 2));
+      spoke.rotation.y = -a;
+      this.rotor.add(spoke);
+      // stays from the top of the hub out to the inner wall
+      const top = new THREE.Vector3(Math.cos(a) * 1.2, 1.6, Math.sin(a) * 1.2);
+      const rim = new THREE.Vector3(Math.cos(a) * RI, 1.0, Math.sin(a) * RI);
+      const stay = tube(0.07, top.distanceTo(rim), metal(C.steelLight), 6);
+      stay.position.copy(top).lerp(rim, 0.5);
+      stay.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), rim.clone().sub(top).normalize());
+      this.rotor.add(stay);
+    }
+    this.wobble.add(this.rotor);
+    this.wobble.position.y = Y;
+    // it turns, so nothing on it is anything to stand on
+    this.wobble.userData.noCollide = true;
+    g.add(this.wobble);
+
+    // ---- products out through the mast ---------------------------------
+    this.ufFlow = flowMaterial(C.thickUf, { density: bandsFor(Y), intensity: 1.6 });
+    const ufLine = tube(0.28, Y - 2.4, this.ufFlow, 12);
+    ufLine.position.set(1.2, (Y - 2.4) / 2 + 0.2, 0.9);
+    g.add(ufLine);
+    this.ofFlow = flowMaterial(C.water, { density: bandsFor(3), intensity: 1.0 });
+    const ofLine = tube(0.26, 1.2, this.ofFlow, 12);
+    ofLine.rotation.z = Math.PI / 2;
+    ofLine.position.set(1.6, 9.8, 0);
+    g.add(ofLine);
+
+    // access: a platform round the mast, and a ladder up to it
+    const deck = platform(5.2, 5.2, { y: 4.4, accent: C.amber, legs: false });
+    g.add(deck);
+    const lad = ladder(4.6);
+    lad.position.set(-2.6, 0.6, 1.2);
+    lad.rotation.y = Math.PI / 2;
+    g.add(lad);
 
     this.bar = new LevelBar(3.0, C.lime, 0.4);
-    this.bar.group.position.set(9.3, D + 0.4, 4);
-    this.bar.group.rotation.y = -Math.PI / 2;
+    this.bar.group.position.set(3.4, 0.6, -2.2);
+    this.bar.group.rotation.y = -Math.PI / 4;
     g.add(this.bar.group);
-    this.beacon.group.position.set(9.3, D, -4);
+    this.beacon.group.position.set(-3.2, 0.6, -2.4);
     g.add(this.beacon.group);
 
-    this.focus.set(0, D + 2, 0);
-    this.viewOffset = new THREE.Vector3(-14, 14, 24);
-    this.mountTag(D + 9);
+    this.focus.set(0, Y, 0);
+    this.viewOffset = new THREE.Vector3(-18, 16, 26);
+    this.mountTag(Y + 7.5);
   }
 
   update(t: Telemetry, dt: number) {
     const th = t.thickener;
     const on = th.underflow.solids > 1;
-    // a few thousand g: drawn as a blur, not at the real 3,000 rpm
-    for (const b of this.bowls) b.rotation.x += dt * (on ? 22 : 0.4);
-    this.stripes.emissiveIntensity = on ? 1.6 : 0.3;
+    // gravity at the rim is w^2.r, so the rim's g gives the speed back
+    const omega = Math.sqrt((Math.max(th.g, 0) * 9.81) / this.R);
+    this.angle = (this.angle + dt * omega) % (Math.PI * 2);
+    this.rotor.rotation.y = this.angle;
+
+    // Out of balance, the spin axis precesses: it tilts toward the heavy side,
+    // and the heavy side goes round with the ring.
+    const amp = clamp01((th.torque - 55) / 45) * 0.045;
+    this.wobble.rotation.x = Math.sin(this.angle) * amp;
+    this.wobble.rotation.z = Math.cos(this.angle) * amp;
+
+    // the bed packs out from the rim as it builds
+    const w = 0.25 + 1.9 * clamp01(th.bedPct / 110);
+    if (Math.abs(w - this.bedW) > 0.04) {
+      this.bedW = w;
+      this.bed.geometry.dispose();
+      this.bed.geometry = new THREE.RingGeometry(this.RO - 0.05 - w, this.RO - 0.05, 96, 1);
+    }
+    const muddy = clamp01((th.overflowClarity - 50) / 2500);
+    this.liquorMat.color.lerpColors(new THREE.Color(C.water), new THREE.Color(C.tails), muddy);
+    this.liquorMat.emissive.copy(this.liquorMat.color);
+
+    this.lamps.emissiveIntensity = omega > 0.05 ? 1.9 : 0.3;
+    this.union.emissiveIntensity = on ? 1.8 + Math.sin(t.time * 4) * 0.3 : 0.4;
     setFlow(this.ufFlow, on ? 1.4 : 0);
     setFlow(this.ofFlow, th.overflow.water > 1 ? 2.2 : 0);
-    this.bar.setLevel(clamp01(th.torque / 100), th.torque > 85 ? C.red : th.torque > 70 ? C.amber : C.lime);
-    this.beacon.set(th.torque > 85 ? C.red : on ? C.lime : C.cyan, 2.2);
+
+    const trip = th.torque > 92, warn = th.torque > 78;
+    this.bar.setLevel(clamp01(th.torque / 100), trip ? C.red : warn ? C.amber : C.lime);
+    this.beacon.set(trip ? C.red : warn || muddy > 0.15 ? C.amber : on ? C.lime : C.cyan, trip ? 5 : 2.2);
     this.tag.set(
       (th.ufCw * 100).toFixed(1) + '%',
-      'cake  ·  ' + th.torque.toFixed(0) + '% scroll torque',
-      th.torque > 85 ? 'warn' : 'ok',
+      'U/F  ·  ' + th.g.toFixed(2) + ' g  ·  ' + th.torque.toFixed(0) + '% imbalance',
+      trip ? 'trip' : warn || muddy > 0.15 ? 'warn' : 'ok',
+    );
+  }
+}
+
+// ========================================================== MAGNETIC STACK
+
+/**
+ * A magnetic settling stack, four storeys tall where a thickener would want
+ * a city block. Flocculant carrying fine magnetite goes in at the top, and a
+ * column of coils pulls the flocs down many times faster than they would
+ * fall: the clear water leaves over the launder at the top, the thickened
+ * underflow from the cone at the bottom, and a drum magnet at the foot takes
+ * the magnetite back out of it to be used again.
+ *
+ * The coils glow with the field and go from magenta to amber as they heat.
+ * A slot of glass up one side shows the flocs falling and the blanket
+ * building at the bottom.
+ */
+export class MagStack extends Unit implements Dewaterer {
+  readonly id = 'thickener';
+  readonly name = 'Magnetic Settling Stack';
+  feedIn = new THREE.Vector3(0, 21.2, 0);
+  ufOut = new THREE.Vector3(0, 0.7, 0);
+  ofOut = new THREE.Vector3(4.4, 17.4, 0);
+
+  private coils: THREE.MeshStandardMaterial;
+  private blanket: THREE.Mesh;
+  private drum = new THREE.Group();
+  private ufFlow: FlowMaterial;
+  private ofFlow: FlowMaterial;
+  private bus: THREE.MeshStandardMaterial;
+  private bar: LevelBar;
+  private beacon = new Beacon();
+  private flocs?: Spout;
+  private heat?: Spout;
+  private _w = new THREE.Vector3();
+
+  private readonly R = DESIGN.stackDia / 2;
+  /** top of the cone, and the top of the column */
+  private readonly H0 = 3.4;
+  private readonly H1 = 18.2;
+
+  constructor() {
+    super('MAG STACK', 3.0, '#ff4fd8');
+    const g = this.group;
+    const { R, H0, H1 } = this;
+
+    // cone on a ring beam, and the frame that carries the column
+    const cone = cyl(R, 0.5, H0 - 0.8, metal(C.steelDark, 0.55, 0.9), 32);
+    cone.position.y = 0.8 + (H0 - 0.8) / 2;
+    g.add(cone);
+    const frame = platform(R * 2 + 2.4, R * 2 + 2.4, { y: H1 + 0.2, accent: 0xff4fd8 });
+    g.add(frame);
+    for (const y of [H0, H0 + 5, H0 + 10]) {
+      const tie = platform(R * 2 + 2.4, R * 2 + 2.4, { y, rails: false, legs: false });
+      tie.children[0].visible = false;   // just the ring of edge beams, no deck
+      g.add(tie);
+    }
+
+    // The column: steel, with a slot of glass up the side facing the plant.
+    const GAP = 0.7;
+    const shell = new THREE.Mesh(
+      new THREE.CylinderGeometry(R, R, H1 - H0, 40, 1, true, Math.PI / 2 + GAP / 2, Math.PI * 2 - GAP),
+      new THREE.MeshStandardMaterial({ color: 0x3d3a4a, roughness: 0.5, metalness: 0.85, side: THREE.DoubleSide }),
+    );
+    shell.position.y = (H0 + H1) / 2;
+    shell.castShadow = shell.receiveShadow = true;
+    g.add(shell);
+    const pane = new THREE.Mesh(
+      new THREE.CylinderGeometry(R + 0.02, R + 0.02, H1 - H0 - 0.4, 8, 1, true, Math.PI / 2 - GAP / 2, GAP),
+      glass(0xffc8f0, 0.14),
+    );
+    pane.position.y = (H0 + H1) / 2;
+    g.add(pane);
+
+    // what is inside: murky liquor, and the blanket of settled floc
+    const inside = new THREE.Mesh(
+      new THREE.CylinderGeometry(R - 0.1, R - 0.1, H1 - H0 - 0.6, 24),
+      liquor(0x4a4a5a, 0.55),
+    );
+    inside.position.y = (H0 + H1) / 2 - 0.2;
+    g.add(inside);
+    this.blanket = new THREE.Mesh(new THREE.CylinderGeometry(R - 0.12, R - 0.12, 1, 24), liquor(C.thickUf, 1));
+    g.add(this.blanket);
+
+    // Seven coils up the column. Each is a dark can with a lit band round it -
+    // the band is what shows the field, and the heat.
+    this.coils = glowUnique(0xff4fd8, 1.6);
+    for (let i = 0; i < 7; i++) {
+      const y = H0 + 1.4 + (i * (H1 - H0 - 2.8)) / 6;
+      const can = new THREE.Mesh(new THREE.TorusGeometry(R + 0.42, 0.4, 10, 40), metal(0x2a2733, 0.45, 0.8));
+      can.rotation.x = Math.PI / 2;
+      can.position.y = y;
+      g.add(can);
+      const band = new THREE.Mesh(new THREE.TorusGeometry(R + 0.84, 0.07, 6, 48), this.coils);
+      band.rotation.x = Math.PI / 2;
+      band.position.y = y;
+      g.add(band);
+      for (let k = 0; k < 4; k++) {
+        const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+        const clamp = box(0.3, 1.0, 0.3, metal(C.steelLight));
+        clamp.position.set(Math.cos(a) * (R + 0.42), y, Math.sin(a) * (R + 0.42));
+        g.add(clamp);
+      }
+    }
+
+    // top: overflow launder ring, feedwell drop, and a downcomer to the rack
+    const launder = new THREE.Mesh(new THREE.TorusGeometry(R + 0.3, 0.35, 8, 40), metal(C.steelDark));
+    launder.rotation.x = Math.PI / 2;
+    launder.position.y = H1 - 0.2;
+    g.add(launder);
+    const well = tube(0.36, 21.2 - (H1 - 1.2), metal(C.steelDark), 12);
+    well.position.y = (21.2 + H1 - 1.2) / 2;
+    g.add(well);
+    this.ofFlow = flowMaterial(C.water, { density: bandsFor(2), intensity: 1.0 });
+    const of = tube(0.28, 1.6, this.ofFlow, 12);
+    of.rotation.z = Math.PI / 2;
+    of.position.set(R + 0.8, 17.4, 0);
+    g.add(of);
+
+    // busbar up the side from the rectifier, lit when the coils are on
+    const rect = box(2.0, 2.4, 1.4, metal(0x2c2440, 0.5, 0.7));
+    rect.position.set(-R - 2.6, 1.2, 2.4);
+    g.add(rect);
+    this.bus = glowUnique(0xff4fd8, 1.2);
+    const busbar = box(0.14, H1 - 1.4, 0.3, this.bus);
+    busbar.position.set(-R - 1.0, (H1 - 1.4) / 2 + 1.2, 2.0);
+    g.add(busbar);
+    const feeder = box(1.6, 0.14, 0.3, this.bus);
+    feeder.position.set(-R - 1.8, 2.3, 2.0);
+    g.add(feeder);
+
+    // Underflow out of the cone, past the drum magnet that takes the seed
+    // back, and away to the surge tank.
+    this.ufFlow = flowMaterial(C.thickUf, { density: bandsFor(3), intensity: 1.6 });
+    const ufDown = tube(0.3, 0.6, this.ufFlow, 12);
+    ufDown.position.set(0, 0.6, 0);
+    g.add(ufDown);
+    const drumBody = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 2.2, 24), metal(0x5a5070, 0.35, 0.9));
+    drumBody.rotation.x = Math.PI / 2;
+    this.drum.add(drumBody);
+    for (let k = 0; k < 6; k++) {
+      const s = box(0.08, 0.1, 2.24, glowUnique(0xff4fd8, 1.4));
+      const a = (k / 6) * Math.PI * 2;
+      s.position.set(Math.cos(a) * 0.91, Math.sin(a) * 0.91, 0);
+      s.rotation.z = a;
+      this.drum.add(s);
+    }
+    this.drum.position.set(R + 1.6, 1.4, -1.8);
+    this.drum.userData.noCollide = true;
+    g.add(this.drum);
+    const trough = box(2.6, 0.5, 2.6, metal(C.steelDark));
+    trough.position.set(R + 1.6, 0.4, -1.8);
+    g.add(trough);
+
+    const lad = ladder(H1 + 0.4);
+    lad.position.set(0, 0, -R - 1.2);
+    g.add(lad);
+
+    this.bar = new LevelBar(3.0, C.lime, 0.4);
+    this.bar.group.position.set(-R - 2.6, 2.6, 3.2);
+    g.add(this.bar.group);
+    this.beacon.group.position.set(-R - 3.4, 2.4, 1.6);
+    g.add(this.beacon.group);
+
+    this.focus.set(0, 9, 0);
+    this.viewOffset = new THREE.Vector3(-18, 12, 28);
+    this.mountTag(H1 + 4.2);
+  }
+
+  update(t: Telemetry, dt: number, fx: FX) {
+    const th = t.thickener;
+    const on = th.underflow.solids > 1;
+    const running = t.status !== 'idle' && t.status !== 'blocked';
+    const heat = clamp01((th.torque - 40) / 55);
+
+    // the field, and how hot it is making the coils
+    this.coils.emissiveIntensity = running ? 0.5 + 2.2 * th.field + Math.sin(t.time * 9) * 0.08 : 0.25;
+    this.coils.emissive.setRGB(1, 0.37 + 0.3 * heat, 0.85 - 0.7 * heat);
+    this.bus.emissiveIntensity = running ? 0.6 + 1.2 * th.field : 0.2;
+
+    // the blanket of settled floc at the bottom of the column
+    const h = 0.4 + 5.5 * clamp01(th.bedPct / 110);
+    this.blanket.scale.y = h;
+    this.blanket.position.y = this.H0 + h / 2;
+
+    this.drum.rotation.z -= dt * (on ? 2.4 : 0);
+    setFlow(this.ufFlow, on ? 1.4 : 0);
+    setFlow(this.ofFlow, th.overflow.water > 1 ? 2.2 : 0);
+
+    // flocs falling past the glass, faster the harder the field pulls them
+    this.flocs ??= new Spout(fx.liquid, 30, (at) => ({
+      at, count: 0,
+      velocity: new THREE.Vector3(0, -2.5, 0),
+      spread: new THREE.Vector3(0.1, 0.8, 0.1),
+      jitter: new THREE.Vector3(0.6, 1.5, 0.3),
+      colour: C.thickUf, size: 0.14, sizeVary: 0.4,
+      life: 2.2, gravity: -2, drag: 0.9,
+    }));
+    this._w.set(0, this.H1 - 3, this.R - 0.4).applyMatrix4(this.group.matrixWorld);
+    this.flocs.run(dt, on ? 0.3 + th.field : 0, this._w);
+
+    // and a shimmer off the coils when they are running hot
+    this.heat ??= new Spout(fx.haze, 5, (at) => ({
+      at, count: 0,
+      velocity: new THREE.Vector3(0, 0.6, 0),
+      spread: new THREE.Vector3(0.3, 0.2, 0.3),
+      jitter: new THREE.Vector3(this.R + 0.5, 3, this.R + 0.5),
+      colour: 0xffb080, size: 1.0, sizeVary: 0.4,
+      life: 2.5, gravity: 0.2, drag: 0.6, grow: 2,
+    }));
+    this._w.set(0, 11, 0).applyMatrix4(this.group.matrixWorld);
+    this.heat.run(dt, running && heat > 0.55 ? heat : 0, this._w);
+
+    const muddy = clamp01((th.overflowClarity - 50) / 2500);
+    const trip = th.torque > 92, warn = th.torque > 78;
+    this.bar.setLevel(clamp01(th.torque / 100), trip ? C.red : warn ? C.amber : C.lime);
+    this.beacon.set(trip ? C.red : warn || muddy > 0.15 ? C.amber : on ? C.lime : C.cyan, trip ? 5 : 2.2);
+    this.tag.set(
+      (th.ufCw * 100).toFixed(1) + '%',
+      'U/F  ·  ' + th.field.toFixed(2) + ' T  ·  coils ' + th.torque.toFixed(0) + '%',
+      trip ? 'trip' : warn || muddy > 0.15 ? 'warn' : 'ok',
     );
   }
 }

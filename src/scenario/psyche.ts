@@ -1,4 +1,5 @@
 import type { Scenario } from './types';
+import { PSYCHE_BINDERS } from '../sim/binders';
 
 /**
  * 16 Psyche. Surface gravity is about 0.144 m/s2 (1.5% of Earth's) and
@@ -8,8 +9,14 @@ import type { Scenario } from './types';
  * times that is the 750 kPa it has to be cured to.
  *
  * With no drop to speak of and a short line, pressure is not the problem
- * here. Money is: binder has to be fired in a kiln, water came from an ice
- * moon, and anything spilled boils off into vacuum.
+ * here. Money is: there is no limestone to make cement from, water came from
+ * an ice moon, and anything spilled boils off into vacuum.
+ *
+ * So nothing in the back half is Earth kit. The thickener is built inside a
+ * ring, spun until it makes its own gravity (w^2.r - ten rpm on an 8 m rim is
+ * nine-tenths of a g). The press is a microwave tunnel open to the vacuum,
+ * where water boils without being asked twice, and a cold trap in the
+ * asteroid's shadow freezes the vapour back out - up to what it can take.
  */
 export const PSYCHE: Scenario = {
   id: 'psyche',
@@ -17,7 +24,7 @@ export const PSYCHE: Scenario = {
   title: 'Mass Driver One',
   place: '16 Psyche · main asteroid belt',
   blurb: 'No stope, no dam, no air. Bind the waste into slugs and throw it off the asteroid.',
-  chips: ['0.015 g', 'Centrifuge, not thickener', 'Water $400/m³', 'Binder $1,650/t'],
+  chips: ['0.015 g', 'Spin-ring thickener', 'Microwave drier', 'Water $400/m³'],
   objective: 'Launch 6,000 m³. Slugs at 750 kPa or they shatter on the rail. Do not waste the water.',
   budget: 300,
   story: [
@@ -37,8 +44,9 @@ export const PSYCHE: Scenario = {
       from: [-196, 44, 64, -228, -10, -4], to: [-150, 26, 44, -118, 4, -8], ms: 9500,
       text: 'Mining it was the easy part: open pits in the metal, a mill, and a magnet - '
         + 'there is nothing to float when the ore is iron. The waste was the hard part. '
-        + 'A thickener needs gravity, and there is almost none here, so the tailings '
-        + 'are spun dry in a centrifuge instead. And there is no tailings dam in a '
+        + 'A thickener needs gravity, and there is almost none here - so they built '
+        + 'one inside a ring and spun it until it made its own. What the ring leaves, '
+        + 'microwaves boil off into the vacuum. And there is no tailings dam in a '
         + 'vacuum, no stope to put it back into.',
     },
     {
@@ -50,9 +58,11 @@ export const PSYCHE: Scenario = {
     },
     {
       from: [-30, 14, 70, -2, 5, 17], to: [-24, 10, 64, -2, 5, 17], ms: 8000,
-      text: 'Everything here was shipped or mined at ruinous cost. The binder comes '
-        + 'out of a kiln that eats power. The water came from an ice moon. Spill a '
-        + 'litre and it boils away into the dark.',
+      text: 'Everything here was shipped or mined at ruinous cost. There has never been '
+        + 'a limestone on Psyche, so there is no cement: the binder is the waste itself, '
+        + 'woken with an alkali shipped up a gravity well - or iron carbonate grown out '
+        + 'of the habitat\'s own breath. The water came from an ice moon. Spill a litre '
+        + 'and it boils away into the dark.',
     },
   ],
   names: {
@@ -75,24 +85,25 @@ export const PSYCHE: Scenario = {
       + 'little friction to fight. Pressure is not the constraint out here - the '
       + 'price of binder and water is.',
   },
-  start: { ufCw: 0.60 },
+  start: { ufCw: 0.62, spin: 9, mwPower: 5, belt: 70 },
   design: {
-    dewater: 'centrifuge',
-    dewaterPowerKw: 650,
+    dewater: 'spinring',
+    filter: 'microwave',
+    thickenerBedMax: 500,
+    binders: PSYCHE_BINDERS,
     // a closed water circuit: everything recovered goes back to the mill
     millReturnCap: 1e6,
     gravity: 0.144,
     pipeLength: 180,
     pipeDrop: 0,
     targetUcs: 750,
-    costBinder: 1650,
     costWater: 400,
     costWaterLost: 400,
     costSpill: 9000,
     costPowerKwh: 0.06,
   },
   /**
-   * Open pit, ball mill, magnetic drum, decanter centrifuge. The ore is 38%
+   * Open pit, ball mill, magnetic drum, spin ring, microwaves. The ore is 38%
    * metal, and whatever the drum misses rides along in the tailings and makes
    * them heavier. Balls come from Earth, which is why they cost what they cost.
    */

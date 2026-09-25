@@ -470,7 +470,7 @@ export class ReclaimFront extends Unit {
     this.tag.set(
       u.solids.toFixed(0) + ' t/h',
       'reclaimed  ·  ' + u.sulphide.toFixed(2) + '% S',
-      u.sulphide > 0.9 && u.binderType === 'opc' ? 'warn' : 'ok',
+      u.sulphide > 0.9 && u.binder.sulphate > 0.15 ? 'warn' : 'ok',
     );
   }
 }
@@ -483,6 +483,11 @@ interface Loader { g: THREE.Group; bucket: THREE.Group; pile: number; phase: num
  * Waste piles, the loaders that work them, and a hammer crusher with a scrap
  * magnet over its belt. There is no slurry anywhere on this site: the crushed
  * waste goes to the bin on a belt, dry.
+ *
+ * The crusher is as old-fashioned as it looks: a flywheel on a flat belt off
+ * the motor, turning at whatever the rotor is set to, and a grate under the
+ * hammers whose bars open and close with its setting. Choke it and the
+ * hopper heaps up while the loaders wait.
  */
 export class ScoopFront extends Unit {
   readonly id = 'upstream';
@@ -490,6 +495,10 @@ export class ScoopFront extends Unit {
 
   private loaders: Loader[] = [];
   private rotor = new THREE.Group();
+  private pulley = new THREE.Group();
+  private driveBelt: FlowMaterial;
+  private bars: THREE.Mesh[] = [];
+  private heap: THREE.Mesh;
   private magnet: THREE.MeshStandardMaterial;
   private belt: FlowMaterial;
   private lumps: THREE.Mesh[] = [];
@@ -552,20 +561,65 @@ export class ScoopFront extends Unit {
     const mill = box(5, 3.6, 4.4, metal(0x4a5260, 0.5, 0.85));
     mill.position.set(H.x, 3.6, H.z);
     g.add(mill);
-    const fly = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 0.4, 24), metal(0x8c97a6, 0.4, 0.9));
-    fly.rotation.x = Math.PI / 2;
+    // what the loaders have tipped and the crusher has not yet taken
+    this.heap = new THREE.Mesh(new THREE.ConeGeometry(2.4, 1, 10), matte(0x6a5238, 1));
+    this.heap.position.set(H.x, 7.2, H.z);
+    this.heap.userData.noCollide = true;
+    g.add(this.heap);
+
+    // The flywheel: plain steel spokes, a rim, and one painted spoke so you
+    // can see it turn.
+    const fly = new THREE.Mesh(new THREE.TorusGeometry(1.45, 0.18, 8, 28), metal(0x8c97a6, 0.4, 0.9));
     this.rotor.add(fly);
-    for (let k = 0; k < 4; k++) {
-      const spoke = box(3.0, 0.2, 0.42, glow(C.amber, 1.4));
-      spoke.rotation.z = (k * Math.PI) / 4;
+    const boss = cyl(0.35, 0.35, 0.5, metal(C.steelLight), 12);
+    boss.rotation.x = Math.PI / 2;
+    this.rotor.add(boss);
+    for (let k = 0; k < 6; k++) {
+      const spoke = box(1.45, 0.14, 0.14, k ? metal(0x8c97a6, 0.4, 0.9) : glow(C.amber, 1.4));
+      const a = (k * Math.PI) / 3;
+      spoke.position.set(Math.cos(a) * 0.72, Math.sin(a) * 0.72, 0);
+      spoke.rotation.z = a;
       this.rotor.add(spoke);
     }
     this.rotor.position.set(H.x, 3.6, H.z + 2.5);
+    this.rotor.userData.noCollide = true;
     g.add(this.rotor);
-    const motor = cyl(0.9, 0.9, 2.6, metal(0x3c4a5c, 0.45, 0.9), 18);
-    motor.rotation.z = Math.PI / 2;
-    motor.position.set(H.x - 4.4, 1.6, H.z + 2.5);
+
+    // The motor, on its own base, driving the flywheel on a flat belt.
+    const MX = H.x - 5.2, MY = 1.3, MZ = H.z + 2.5;
+    const mbase = box(2.4, 0.4, 2.0, metal(C.steelDark));
+    mbase.position.set(MX, 0.2, MZ - 0.9);
+    g.add(mbase);
+    const motor = cyl(0.8, 0.8, 1.9, metal(0x3c4a5c, 0.45, 0.9), 18);
+    motor.rotation.x = Math.PI / 2;
+    motor.position.set(MX, MY, MZ - 1.1);
     g.add(motor);
+    const pul = cyl(0.55, 0.55, 0.5, metal(0x8c97a6, 0.4, 0.9), 18);
+    pul.rotation.x = Math.PI / 2;
+    this.pulley.add(pul);
+    const mark = box(0.5, 0.1, 0.52, glow(C.amber, 1.4));
+    mark.position.x = 0.25;
+    this.pulley.add(mark);
+    this.pulley.position.set(MX, MY, MZ);
+    this.pulley.userData.noCollide = true;
+    g.add(this.pulley);
+    this.driveBelt = beltMaterial(0x2a2622);
+    for (const side of [1, -1]) {
+      const a = V(MX, MY + side * 0.55, MZ), b = V(H.x, 3.6 + side * 1.6, MZ);
+      const run = box(a.distanceTo(b), 0.06, 0.42, this.driveBelt);
+      run.position.copy(a).lerp(b, 0.5);
+      run.rotation.z = Math.atan2(b.y - a.y, b.x - a.x);
+      run.userData.noCollide = true;
+      g.add(run);
+    }
+
+    // the grate under the hammers, its bars as far apart as it is set
+    for (let i = 0; i < 9; i++) {
+      const bar = box(0.14, 0.16, 4.0, metal(0x5a6068, 0.55, 0.8));
+      bar.position.set(H.x, 1.62, H.z);
+      this.bars.push(bar);
+      g.add(bar);
+    }
 
     // ---- the belt to the bin, with the scrap magnet hung over it
     const from = this.beltFrom, to = this.beltTo;
@@ -648,8 +702,20 @@ export class ScoopFront extends Unit {
     const u = t.upstream;
     const live = t.status !== 'idle' && t.status !== 'blocked';
     const feeding = t.filter.throughput > 0.5;
-    this.rotor.rotation.z -= dt * (live ? 14 : 0.2);
-    this.magnet.emissiveIntensity = live ? 1.4 + Math.sin(t.time * 3) * 0.4 : 0.3;
+    // a real flywheel at 1,000 rpm is a blur, so this is a tenth of it
+    const spin = live ? (u.rotor / 60) * Math.PI * 2 * 0.1 : 0.2;
+    this.rotor.rotation.z -= dt * spin;
+    this.pulley.rotation.z -= dt * spin * (1.6 / 0.55);
+    setFlow(this.driveBelt, live ? spin * 1.2 : 0);
+    const gap = 0.26 + 0.05 * (u.grate || 4);
+    for (let i = 0; i < this.bars.length; i++) {
+      this.bars[i].position.x = this.HOP.x + (i - (this.bars.length - 1) / 2) * gap;
+    }
+    // when the grate is what limits it, the hopper heaps up and the loaders wait
+    const choked = live && u.crushed >= u.crusherCap - 1;
+    this.heap.scale.y = choked ? 2.8 : 0.2;
+    this.heap.position.y = 6.4 + this.heap.scale.y / 2;
+    this.magnet.emissiveIntensity = live ? 0.6 + 1.6 * u.sulphideRecovery + Math.sin(t.time * 3) * 0.3 : 0.3;
     setFlow(this.belt, feeding ? 1.9 : 0);
     const span = this.beltFrom.distanceTo(this.beltTo);
     for (const l of this.lumps) {
@@ -660,7 +726,7 @@ export class ScoopFront extends Unit {
 
     // loaders: out to a pile, scoop, back to the hopper, dump
     for (const L of this.loaders) {
-      if (live) L.phase = (L.phase + dt * L.speed) % 1;
+      if (live) L.phase = (L.phase + dt * L.speed * (choked ? 0.35 : 1)) % 1;
       const pile = this.piles[L.pile % this.piles.length];
       const hop = V(this.HOP.x - 7, 0, this.HOP.z + (L.pile % 2 ? 4 : -4));
       const toPile = pile.clone().add(hop.clone().sub(pile).normalize().multiplyScalar(11));

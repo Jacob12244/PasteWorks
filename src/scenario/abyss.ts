@@ -1,4 +1,5 @@
 import type { Scenario } from './types';
+import { NEREID_BINDERS } from '../sim/binders';
 
 /**
  * The Clarion-Clipperton Zone: a plain of polymetallic nodules at 4-5 km in
@@ -11,6 +12,13 @@ import type { Scenario } from './types';
  * Seawater is free and unlimited; what costs money is plume, because every
  * cubic metre that leaves the plant carrying fines is a cubic metre the
  * regulator counts.
+ *
+ * At 4,400 m the sea stands at 440 bar, and a plate press squeezes at about
+ * a sixtieth of that. So the press here is a hull at one atmosphere with the
+ * cloth in its wall: open the sea valve and the ocean does the pressing. The
+ * catch is that every litre of filtrate is now inside the hull and has to be
+ * pumped back out against the same sea - and push hard enough and the fines
+ * come through the cloth with it.
  */
 export const ABYSS: Scenario = {
   id: 'abyss',
@@ -18,7 +26,7 @@ export const ABYSS: Scenario = {
   title: 'Station Nereid',
   place: 'Clarion–Clipperton Zone · 4,400 m',
   blurb: 'Vacuum the nodules off the seabed, process on the bottom, and pump the rest 3 km back into the furrows.',
-  chips: ['Seabed collector', 'No thickener', '2 °C cure', 'Plume $250/t'],
+  chips: ['Seabed collector', 'The sea is the press', '2 °C cure', 'Plume $250/t'],
   objective: 'Fill Furrow 7 at 600 kPa. Nothing leaves the plant but paste.',
   budget: 23,
   story: [
@@ -44,15 +52,16 @@ export const ABYSS: Scenario = {
       from: [-96, 10, 44, -130, 4, 0], to: [-84, 32, 62, -106, 26, -12], ms: 9000,
       text: 'So the plant came down to the floor with the collectors. They vacuum up '
         + 'nodules and sediment together; the nodules go up the riser to the ship, and '
-        + 'the sediment never leaves the bottom. Cyclones take the water out, a press '
-        + 'takes the rest, and the paste goes three kilometres across the plain to fill '
-        + 'the furrows the collectors cut.',
+        + 'the sediment never leaves the bottom. Cyclones take the water out, and the '
+        + 'sea itself presses the rest: four hundred and forty bar on one side of the '
+        + 'cloth, a hull at one atmosphere on the other. The paste goes three kilometres '
+        + 'across the plain to fill the furrows the collectors cut.',
     },
     {
       from: [-26, 8, 74, -14, 4, 50], to: [-20, 6, 66, -14, 4, 50], ms: 8000,
       text: 'At two degrees the cement sets at a crawl. The line is long and dead '
         + 'level, so gravity gives you nothing. And every gram of fines the cyclones '
-        + 'let go is plume.',
+        + 'let go, or the sea forces through the cloth, is plume.',
     },
   ],
   names: {
@@ -91,6 +100,10 @@ export const ABYSS: Scenario = {
   },
   design: {
     dewater: 'cyclones',
+    filter: 'deeppress',
+    // cloth in a pressure hull is dear, so there is not much of it
+    filterArea: 75,
+    binders: NEREID_BINDERS,
     costPlume: 250,
     millReturnCap: 1e6,
     pipeLength: 2800,

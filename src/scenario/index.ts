@@ -45,7 +45,8 @@ export function applyScenario(s: Scenario) {
   Object.assign(DESIGN, BASE.design, s.design);
   Object.assign(ORE, BASE.ore, s.ore ?? {});
   Object.assign(DEFAULT_SETPOINTS, BASE.start, s.start ?? {});
-  Object.assign(DEFAULT_UPSTREAM, BASE.up, s.upStart ?? {});
+  // the silo starts on the first of this site's two binders
+  Object.assign(DEFAULT_UPSTREAM, BASE.up, { binderType: DESIGN.binders[0].id }, s.upStart ?? {});
   Object.assign(SITE_TEXT, BASE.text, {
     done: s.names.done, spillTo: s.names.spillTo, delivery: s.names.delivery,
     ...(s.media ? { media: s.media[0], mediaThing: s.media[1] } : {}),

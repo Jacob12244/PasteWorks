@@ -1,4 +1,5 @@
 import type { Scenario } from './types';
+import { MERIDIAN_BINDERS } from '../sim/binders';
 
 /**
  * A city standing on an old mine. The workings are 620 m below the street,
@@ -9,6 +10,12 @@ import type { Scenario } from './types';
  * The fill has to carry a tower's foundation load, so the strength target is
  * half again the mining one - and power is bought off a grid that knows
  * exactly how badly you need it.
+ *
+ * And there is no floor space. An 18 m thickener does not fit in a canyon a
+ * block wide, so the tailings settle in a magnetic stack four storeys tall -
+ * magnetite-seeded floc pulled down by coils - and the cake is finished on a
+ * belt press with electrodes in it. Both of them run on electricity, at the
+ * city's price.
  */
 export const UNDERCITY: Scenario = {
   id: 'undercity',
@@ -16,7 +23,7 @@ export const UNDERCITY: Scenario = {
   title: 'Meridian Undercity',
   place: 'The canyon under Tower 9',
   blurb: 'A megacity built on an old mine. Dredge the old tailings dam and put it back under Tower 9.',
-  chips: ['Tailings dam dredge', '620 m drop', '1,500 kPa', 'Pyritic old tails'],
+  chips: ['Tailings dam dredge', 'Magnetic stack', 'Power $0.46/kWh', '1,500 kPa'],
   objective: 'Fill Void V-9 under Tower 9 at 1,500 kPa before it moves again.',
   budget: 31,
   story: [
@@ -47,10 +54,17 @@ export const UNDERCITY: Scenario = {
         + 'where they came from, six hundred and twenty metres straight down.',
     },
     {
+      from: [-80, 22, 40, -52, 12, 0], to: [-68, 30, 30, -52, 16, 0], ms: 8000,
+      text: 'There was no room in the canyon for a thickener. So the tailings settle in '
+        + 'a column of magnets four storeys tall, and electrodes drag the last of the '
+        + 'water out of the cake. Both run on the city\'s power, at the city\'s price.',
+    },
+    {
       from: [-30, 12, 72, -14, 5, 50], to: [-22, 8, 64, -14, 5, 50], ms: 8000,
       text: 'The old tailings are pyritic, and have been oxidising for a hundred years - '
-        + 'they will eat ordinary cement. The paste has to carry a skyscraper. And a '
-        + 'column that tall falls so hard it will run away from you if you let it.',
+        + 'they will dissolve anything made of calcite. The paste has to carry a '
+        + 'skyscraper. And a column that tall falls so hard it will run away from you '
+        + 'if you let it.',
     },
   ],
   names: {
@@ -73,18 +87,24 @@ export const UNDERCITY: Scenario = {
       + 'collar is the only thing holding it. Stiff paste is not the risk here; '
       + 'runaway is.',
   },
+  start: { field: 0.5, voltage: 25, belt: 70, binderDose: 4.5 },
   design: {
+    dewater: 'magstack',
+    filter: 'eopress',
+    thickenerBedMax: 400,
+    binders: MERIDIAN_BINDERS,
+    // the floc carries the magnetite seed, and not all of it comes back
+    costFloc: 5200,
     pipeLength: 1500,
     pipeDrop: 620,
     targetUcs: 1500,
     costPowerKwh: 0.46,
-    costBinder: 210,
     costSpill: 2500,
   },
   /**
-   * A dredge on the old dam, deslime cyclones, thickener, press. No mill -
-   * these were ground a century ago. They are pyritic and have been
-   * oxidising in the rain ever since, which is what the slag blend is for.
+   * A dredge on the old dam, deslime cyclones, magnetic stack, e-press. No
+   * mill - these were ground a century ago. They are pyritic and have been
+   * oxidising in the rain ever since, which is what the carbon magnesia is for.
    */
   ore: {
     source: 'reclaim', separation: 'none', deslimeCircuit: 1,

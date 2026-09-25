@@ -10,6 +10,12 @@
  *                                          binder silo ---> mixer <+
  *                                          mix water  --->   |
  *                                                       paste pump -> borehole -> stope
+ *
+ * That is today's plant. The later worlds swap the two dewatering stages for
+ * whatever their site can use - a spin ring and a microwave drier on an
+ * asteroid, a magnetic stack and an electro-osmotic press under a city, the
+ * ocean's own pressure on the seabed - but every one of them is the same pull
+ * through the same buffers.
  */
 
 import {
@@ -26,6 +32,7 @@ import {
   UpstreamSetpoints, DEFAULT_UPSTREAM, FeedSpec, FeedEffects,
   BinderType,
 } from './upstream';
+import { portland, type BinderSpec } from './binders';
 
 export type AlarmLevel = 'info' | 'warn' | 'trip';
 
@@ -52,6 +59,20 @@ export interface Setpoints {
   strokeRate: number;
   /** master run/stop */
   running: boolean;
+
+  // ---- the machines only some worlds have -------------------------------
+  /** spin-ring thickener speed, rpm - the ring makes its own gravity */
+  spin: number;
+  /** magnetic settling stack coil field, tesla */
+  field: number;
+  /** deep-sea filter: bar of the ocean's pressure let across the cake */
+  seaDp: number;
+  /** microwave drier magnetron power, MW */
+  mwPower: number;
+  /** belt speed on a microwave drier or an electro-osmotic press, % of rated */
+  belt: number;
+  /** electro-osmotic press electrode voltage, V */
+  voltage: number;
 }
 
 export const DEFAULT_SETPOINTS: Setpoints = {
@@ -62,6 +83,12 @@ export const DEFAULT_SETPOINTS: Setpoints = {
   targetSlump: 125,
   strokeRate: 62,
   running: false,
+  spin: 10,
+  field: 0.8,
+  seaDp: 60,
+  mwPower: 5,
+  belt: 70,
+  voltage: 30,
 };
 
 /** Fixed design data for this plant. */
@@ -82,7 +109,8 @@ export const DESIGN = {
   pipeWallMm: 12.7,         // mm wall, wear allowance
   stopeVolume: 6000,        // m3 to fill - stope 14-2 North
   targetUcs: 1000,          // kPa at 28 days
-  costBinder: 148,          // $/t
+  /** the two binders the silo can hold, and what each costs here */
+  binders: portland(148) as [BinderSpec, BinderSpec],
   costFloc: 4200,           // $/t
   costPowerKwh: 0.11,       // $/kWh
   costWater: 0.35,          // $/m3 raw make-up
@@ -99,8 +127,6 @@ export const DESIGN = {
    * behind - the maturity effect.
    */
   cureFactor: 1,
-  /** slag blend price relative to ordinary portland */
-  slagPremium: 175 / 148,
   /**
    * $/m3 for the water that leaves locked inside the placed fill and never
    * comes back. On a mine with dewatering to spare it is free, which is why
@@ -109,18 +135,86 @@ export const DESIGN = {
    * drier paste worth the trouble.
    */
   costWaterLost: 0,
-  /** thickener, cyclone bank, decanter centrifuge, or nothing at all (dry feed) */
+  /** what takes the bulk of the water out: see Dewater */
   dewater: 'thickener' as Dewater,
-  /** $/t of solids that leave with a cyclone or centrifuge overflow */
+  /** and what takes the rest out before the cake bin: see Filter */
+  filter: 'press' as Filter,
+  /** $/t of solids that leave the plant with a cyclone overflow or a filtrate */
   costPlume: 0,
-  /** kW the dewatering machines draw on top of the rest of the plant */
-  dewaterPowerKw: 0,
   /** % moisture of a dry feed as it goes into the bin */
   dryMoisture: 8,
+
+  // ---- spin-ring thickener --------------------------------------------
+  /** m, rim radius: gravity at the rim is w^2.r */
+  ringRadius: 8,
+  /** m, width of the settling channel round the rim */
+  ringWidth: 3.0,
+  // ---- magnetic settling stack ----------------------------------------
+  /** m, column diameter - a tenth of a thickener's floor */
+  stackDia: 5.6,
+  /** kW the coils draw at one tesla; it goes as the square of the field */
+  coilKw: 1200,
+  // ---- continuous belt filters ----------------------------------------
+  /** t/h dry at full belt speed */
+  beltCap: 240,
+  /** microwave drier: kWh to boil off a tonne of water, latent heat recovered off the trap */
+  evapKwh: 95,
+  /** t/h of vapour the cold trap can freeze out before the rest gets past it */
+  trapCap: 75,
+  /** electro-osmotic press: kWh per dry tonne per volt squared, at 60% belt */
+  eoKwh: 0.0016,
 };
 
-/** How the tailings lose their water before the mixer. */
-export type Dewater = 'thickener' | 'cyclones' | 'centrifuge' | 'dry';
+/**
+ * How the tailings lose the bulk of their water.
+ *
+ *   thickener  settles under gravity into a raked bed
+ *   cyclones   inline, no bed: spun out as they arrive, fines out of the top
+ *   spinring   a thickener built inside a spinning ring, which makes its own
+ *              gravity where there is none worth having
+ *   magstack   a tall, narrow column that pulls magnetite-seeded flocs down
+ *              with a field instead of gravity - a tenth of the floor space
+ *   dry        nothing to take out: the feed is crushed rubbish
+ */
+export type Dewater = 'thickener' | 'cyclones' | 'spinring' | 'magstack' | 'dry';
+
+/**
+ * And what takes the rest out, to a cake.
+ *
+ *   press      a plate press on a cycle
+ *   deeppress  a plate press whose squeeze is the ocean: the cake sits between
+ *              440 bar of seabed and a one-atmosphere hull
+ *   microwave  a belt through a microwave tunnel open to vacuum; the water
+ *              boils off and freezes onto a cold trap
+ *   eopress    a belt press with electrodes in it, pulling the water through
+ *              the cake by electro-osmosis
+ *   none       a dry feed has nothing to filter
+ */
+export type Filter = 'press' | 'deeppress' | 'microwave' | 'eopress' | 'none';
+
+/** Settlers that hold a bed of solids, with a rise rate and a torque. */
+export function bedded(dw: Dewater): boolean {
+  return dw === 'thickener' || dw === 'spinring' || dw === 'magstack';
+}
+
+/** Filters that run a plate cycle, rather than a continuous belt. */
+export function batch(f: Filter): boolean {
+  return f === 'press' || f === 'deeppress';
+}
+
+/** What this site calls its two dewatering machines in a sentence. */
+export function kitNames(): { settler: string; filter: string } {
+  return {
+    settler: {
+      thickener: 'thickener', cyclones: 'cyclones', spinring: 'spin ring',
+      magstack: 'mag stack', dry: 'crusher',
+    }[DESIGN.dewater],
+    filter: {
+      press: 'press', deeppress: 'deep filter', microwave: 'drier',
+      eopress: 'e-press', none: 'crusher',
+    }[DESIGN.filter],
+  };
+}
 
 /**
  * The words the plant uses about its own site. The sim is the same machine
@@ -140,14 +234,22 @@ export interface Telemetry {
   time: number;
   feed: Stream;
 
+  /** the first dewatering stage, whatever it is - see Dewater */
   thickener: {
     bed: number; bedPct: number;
     ufCw: number; maxUfCw: number;
     riseRate: number; riseLimit: number;
+    /** rake torque, ring imbalance or coil temperature: the limit it runs against, % */
     torque: number;
     overflowClarity: number;
     underflow: Stream; overflow: Stream;
     rakeAngle: number;
+    /** gravity at the settling surface, in Earth g - a spin ring makes its own */
+    g: number;
+    /** tesla on a magnetic stack's coils */
+    field: number;
+    /** kW the machine draws on top of the plant's auxiliaries */
+    power: number;
   };
 
   ufTank: { volume: number; pct: number; cw: number };
@@ -156,6 +258,8 @@ export interface Telemetry {
   upstream: FeedSpec & {
     hard: boolean;
     binderType: BinderType;
+    /** everything about the binder in the silo */
+    binder: BinderSpec;
     effects: FeedEffects;
     bypassToTsf: number;
     plantCapacity: number;
@@ -190,12 +294,25 @@ export interface Telemetry {
     totalM3: number;  // cumulative
   };
 
+  /** the second dewatering stage, whatever it is - see Filter */
   filter: {
     cycleTime: number;
     cakeMoisture: number;
     capacity: number; throughput: number; utilisation: number;
     cake: Stream; filtrate: Stream;
     cyclePhase: number; pressing: boolean;
+    /** kW it draws: magnetrons, electrodes, or the pumps pushing filtrate back out to sea */
+    power: number;
+    /** kWh per dry tonne of cake */
+    energy: number;
+    /** t/h of water boiled off in a microwave drier */
+    evap: number;
+    /** t/h of that vapour the cold trap missed, gone for good */
+    trapLoss: number;
+    /** t/h of fines forced through the cloth with the filtrate */
+    bleed: number;
+    /** what it is being run at: bar of sea across the cloth, volts, belt % */
+    dp: number; volts: number; belt: number;
   };
 
   cakeBin: { mass: number; pct: number; cw: number };
@@ -309,13 +426,13 @@ export class Plant {
 
   constructor() {
     // a machine with no bed starts where it is set, not where a thickener would be
-    if (DESIGN.dewater !== 'thickener') this.ufCwActual = this.sp.ufCw;
+    if (!bedded(DESIGN.dewater)) this.ufCwActual = this.sp.ufCw;
     this.step(0);
   }
 
   reset() {
     this.bed = 220; this.ufVol = 90;
-    this.ufCwActual = DESIGN.dewater !== 'thickener' ? DEFAULT_SETPOINTS.ufCw : 0.60;
+    this.ufCwActual = !bedded(DESIGN.dewater) ? DEFAULT_SETPOINTS.ufCw : 0.60;
     this.cakeMass = 40; this.cakeMoist = 17; this.siloMass = 380;
     this.stopeVol = 0; this.stopeTonnes = 0; this.stopeBinder = 0;
     this.ucsSum = 0; this.ucsMin = Infinity; this.lastCakeDraw = 0;
@@ -410,7 +527,8 @@ export class Plant {
     // floated and classified it yourself, and the PSD and sulphide content
     // that come out of that reach all the way through to the stope.
     const spec = upstream(this.up, this.hardMode, this.mediaHealth);
-    const fx = feedEffects(spec, this.up.binderType);
+    const binder = this.binder();
+    const fx = feedEffects(spec, binder);
     setSolidsSG(spec.sg);
     this.feedSpec = spec;
     this.feedFx = fx;
@@ -429,7 +547,8 @@ export class Plant {
     // and a coarse grind leaves the sulphides locked up in the tailings.
     const grinding = ORE.source === 'mill' || ORE.source === 'scoop';
     const mediaRate = this.hardMode && run && grinding
-      ? mediaDraw(this.up.millFeed, spec.specificEnergy) : 0;
+      ? mediaDraw(ORE.source === 'scoop' ? spec.crushed : this.up.millFeed,
+        spec.specificEnergy, spec.duty) : 0;
     const mediaWanted = mediaRate * dtH;
     const mediaFed = Math.min(this.mediaStock, mediaWanted);
     this.mediaStock = Math.max(0, this.mediaStock - mediaFed);
@@ -460,33 +579,67 @@ export class Plant {
         'Tailings supply short at ' + available.toFixed(0) + ' t/h - the plant can take '
         + DESIGN.plantCapacity + '. Grind coarser or ease off the deslime cut.',
         'Tailings supply back up to plant capacity');
-      this.cond('sulphide-high', spec.sulphide > 0.9 && this.up.binderType === 'opc', 'warn',
-        'Tailings at ' + spec.sulphide.toFixed(2) + '% S on ordinary portland - sulphate '
-        + 'attack will eat the 28 day strength. '
-        + (ORE.separation === 'flotation' ? 'Lift the frother or move to a slag blend.' : 'Move to a slag blend.'),
+      const other = DESIGN.binders.find((b) => b !== binder)!;
+      this.cond('sulphide-high', spec.sulphide > 0.9 && binder.sulphate > 0.15, 'warn',
+        'Tailings at ' + spec.sulphide.toFixed(2) + '% S on ' + binder.name.toLowerCase()
+        + ' - sulphate attack will eat the 28 day strength. '
+        + (ORE.separation === 'flotation' ? 'Lift the frother or move to ' : 'Move to ')
+        + other.name.toLowerCase() + '.',
         'Sulphide risk cleared');
+      if (ORE.source === 'scoop') {
+        this.cond('crusher-choked', run && spec.crushed < clamp(this.up.millFeed, 150, 700) - 1, 'warn',
+          'Crusher choking - the grate passes ' + spec.crusherCap.toFixed(0) + ' t/h and the '
+          + 'loaders are bringing ' + this.up.millFeed.toFixed(0) + '. Open the grate or slow them.',
+          'Crusher keeping up with the loaders');
+        this.cond('steel', run && spec.steel > 1.5, 'warn',
+          spec.steel.toFixed(1) + '% tramp steel going into the fill - it is still locked in the '
+          + 'lumps where the magnet cannot reach it. Speed the rotor up or close the grate.',
+          'Tramp steel back under control');
+      }
     }
 
     // ================= 2. Dewatering =====================================
     // How the tailings lose their water depends on where the plant is. A
-    // thickener settles them and buffers them in its bed. A cyclone bank or a
-    // decanter centrifuge does it inline: no bed, no rakes, and whatever it
-    // does not send on goes straight back out with the overflow. A dry feed -
-    // crushed waste - has no water to take out at all, and goes straight to
-    // the bin.
+    // thickener settles them and buffers them in its bed, and so do its two
+    // descendants: a spin ring, which makes the gravity it settles in, and a
+    // magnetic stack, which pulls seeded flocs down with a field in a tenth of
+    // the floor space. A cyclone bank does it inline: no bed, no rakes, and
+    // whatever it does not send on goes straight back out with the overflow. A
+    // dry feed - crushed waste - has no water to take out at all, and goes
+    // straight to the bin.
     const dw = DESIGN.dewater;
-    const inline = dw === 'cyclones' || dw === 'centrifuge';
-    const area = (Math.PI * DESIGN.thickenerDia ** 2) / 4;
+    const inline = dw === 'cyclones';
+    const k = kitNames();
 
     // Flocculant buys both settling flux and achievable underflow density.
-    // On a centrifuge it is polymer, and it buys cake solids and a cleaner
-    // centrate. A cyclone takes no reagent and simply tops out.
+    // What else buys them depends on the machine: a spin ring's speed is its
+    // gravity, w^2.r at the rim, and a stack's field multiplies how fast a
+    // magnetite-seeded floc falls. A cyclone takes no reagent and simply tops out.
     const floc = clamp(sp.flocDose, 0, 45);
-    const riseLimit = dw === 'thickener' ? clamp(0.55 + 0.095 * floc, 0.55, 3.6) : 0;
+    const spin = dw === 'spinring' ? clamp(sp.spin, 0, 20) : 0;
+    const gRel = dw === 'spinring'
+      ? ((2 * Math.PI * spin / 60) ** 2 * DESIGN.ringRadius) / 9.81
+      : DESIGN.gravity / 9.81;
+    const field = dw === 'magstack' ? clamp(sp.field, 0, 2) : 0;
+    const pull = dw === 'spinring' ? Math.pow(Math.max(gRel, 0.01), 0.9)
+      : dw === 'magstack' ? 1 + 7 * Math.pow(field, 1.5)
+      : 1;
+    const area = dw === 'spinring' ? 2 * Math.PI * DESIGN.ringRadius * DESIGN.ringWidth
+      : dw === 'magstack' ? (Math.PI * DESIGN.stackDia ** 2) / 4
+      : (Math.PI * DESIGN.thickenerDia ** 2) / 4;
+    const riseLimit = bedded(dw) ? clamp(0.55 + 0.095 * floc, 0.55, 3.6) * pull : 0;
+    const compaction = dw === 'spinring' ? 0.045 * Math.log2(clamp(gRel, 0.1, 4))
+      : dw === 'magstack' ? 0.06 * field : 0;
     const maxUfCw = dw === 'cyclones' ? 0.60
-      : dw === 'centrifuge' ? clamp(0.56 + 0.0028 * floc, 0.56, 0.68)
       : dw === 'dry' ? 1
-      : clamp(0.545 + 0.0062 * floc, 0.545, 0.72);
+      : dw === 'thickener' ? clamp(0.545 + 0.0062 * floc, 0.545, 0.72)
+      : clamp(0.545 + 0.0062 * floc + compaction, 0.5, 0.76);
+    // bearings and despin on the ring, which goes as a little under the cube
+    // of its speed; the coils as the square of their field
+    const settlerKw = !run ? 0
+      : dw === 'spinring' ? 160 * Math.pow(spin / 10, 2.5)
+      : dw === 'magstack' ? DESIGN.coilKw * field * field
+      : 0;
 
     const binSp = 0.55 * DESIGN.cakeBinCap;
     const binMakeUp = Math.max(0, (binSp - this.cakeMass) / 0.5); // t/h wet, 30 min pull-up
@@ -495,6 +648,7 @@ export class Plant {
     let cake: Stream, filtrate: Stream = EMPTY, underflow: Stream = EMPTY, overflow: Stream = EMPTY;
     let ufDry = 0, solidsLost = 0, clarity = 20, overload = 0, riseRate = 0;
     let surgeSpill = 0, bedPct = 0, excess = 0;
+    let filterKw = 0, energy = 0, evap = 0, trapLoss = 0, bleed = 0;
 
     if (dw === 'dry') {
       // The loaders only scoop what the bin will take; the rest stays in the
@@ -517,13 +671,13 @@ export class Plant {
       this.ufCwActual = approach(this.ufCwActual, ufCwTarget, 120, dt);
       const rhoUf = densityFromCw(this.ufCwActual);
 
-      // The plate press is the real pull on the surge tank, so draw it first.
+      // The filter is the real pull on the surge tank, so draw it first.
       capacity = this.filterCapacity();
       moisture = this.cakeMoisture();
       cakeCw = 1 - moisture / 100;
       const ufDryAvailable = dtH > 0 ? (this.ufVol * rhoUf * this.ufCwActual) / dtH : capacity;
 
-      // The press works to hold the cake bin around mid-range rather than
+      // The filter works to hold the cake bin around mid-range rather than
       // running flat out, so it modulates with the mixer's draw the way a real
       // press does instead of pinning the bin full and backing the circuit up.
       const dryDemand = (this.lastCakeDraw + binMakeUp) * cakeCw;
@@ -531,11 +685,45 @@ export class Plant {
       throughput = run
         ? Math.max(0, Math.min(capacity, dryDemand, ufDryAvailable, this.cakeBinHeadroomDry(dtH)))
         : 0;
-      cake = stream(throughput, (throughput * (1 - cakeCw)) / cakeCw, 0);
+
+      // Only the deep filter squeezes hard enough to force fines through the
+      // cloth: four hundred bar of seabed does not care what it was rated for,
+      // and the filtrate goes straight back out to sea.
+      if (DESIGN.filter === 'deeppress') {
+        const dp = clamp(sp.seaDp, 10, 440);
+        bleed = throughput * clamp(0.0018 * (dp / 100) ** 2 * (spec.fines20 / 0.22), 0, 0.2);
+      }
+      cake = stream(throughput - bleed, ((throughput - bleed) * (1 - cakeCw)) / cakeCw, 0);
       const ufWetDrawn = throughput / Math.max(this.ufCwActual, 1e-6);  // t/h wet slurry
       const drawVol = ufWetDrawn / rhoUf;                               // m3/h
       this.ufVol = clamp(this.ufVol - drawVol * dtH, 0, DESIGN.ufTankVol);
-      filtrate = stream(0, Math.max(0, ufWetDrawn - totalMass(cake)), 0);
+      const removed = Math.max(0, ufWetDrawn - totalMass(cake) - bleed);
+
+      switch (DESIGN.filter) {
+        case 'microwave':
+          // Everything the drier takes out leaves as vapour, and the cold trap
+          // freezes it back out of the vacuum - up to what it can take. Past
+          // that the rest boils off into the dark, and that water came from
+          // an ice moon.
+          evap = removed;
+          trapLoss = evap * this.trapSlip(evap);
+          energy = this.dryEnergy();
+          filterKw = throughput * energy;
+          break;
+        case 'eopress':
+          energy = this.eoEnergy(spec.sulphide);
+          filterKw = throughput * energy;
+          break;
+        case 'deeppress':
+          // Every cubic metre of filtrate lands inside a one-atmosphere hull,
+          // and has to be pumped back out against the same sea that pressed it.
+          filterKw = ((removed / 3600) * clamp(sp.seaDp, 10, 440) * 100) / 0.75;
+          energy = throughput > 0.1 ? filterKw / throughput : 0;
+          break;
+      }
+      filtrate = stream(bleed, removed - trapLoss, 0);
+      this.cost.water += trapLoss * dtH * DESIGN.costWaterLost;
+      this.cost.spill += bleed * dtH * DESIGN.costPlume;
 
       // The underflow pump then runs on surge-tank level control, not flat out -
       // so when the press backs off, the thickener bed is what starts to build.
@@ -545,21 +733,17 @@ export class Plant {
       const ufDryWanted = ufVolWanted * rhoUf * this.ufCwActual;
 
       if (inline) {
-        // Fines always leave with the overflow. A cyclone pushed to a denser
-        // underflow sends more of them; a centrifuge sends fewer the more
-        // polymer it gets. With no bed to hold the rest, whatever the surge
-        // tank cannot take is bypassed back where it came from.
-        const lossFrac = dw === 'cyclones'
-          ? clamp(0.006 + 0.2 * Math.max(0, this.ufCwActual - 0.50), 0.006, 0.05)
-          : clamp(0.032 - 0.0006 * floc, 0.006, 0.032);
+        // Fines always leave with the overflow, and a cyclone pushed to a
+        // denser underflow sends more of them. With no bed to hold the rest,
+        // whatever the surge tank cannot take is bypassed back where it came
+        // from.
+        const lossFrac = clamp(0.006 + 0.2 * Math.max(0, this.ufCwActual - 0.50), 0.006, 0.05);
         solidsLost = feedSolids * lossFrac;
         const avail = Math.max(0, feedSolids - solidsLost);
         ufDry = Math.max(0, Math.min(ufDryWanted, avail, this.ufTankHeadroomDry(dtH)));
         excess = avail - ufDry;
         this.bed = 0;
-        // a decanter's scroll torque climbs with the cake it is asked to make
-        this.torque = approach(this.torque, dw === 'centrifuge' && run
-          ? 30 + 420 * Math.max(0, this.ufCwActual - 0.56) : 0, 30, dt);
+        this.torque = 0;
       } else {
         const bedAvailable = dtH > 0 ? this.bed / dtH : ufDryWanted;
         ufDry = Math.max(0, Math.min(ufDryWanted, bedAvailable, this.ufTankHeadroomDry(dtH)));
@@ -587,12 +771,10 @@ export class Plant {
         this.cost.spill += solidsLost * dtH * DESIGN.costPlume;
         this.cond('plume', run && solidsLost > feedSolids * 0.02, 'warn',
           'Fines leaving with the overflow at ' + solidsLost.toFixed(1) + ' t/h - '
-          + (dw === 'cyclones' ? 'the cyclone underflow is set too dense'
-            : 'more polymer, or ease the cake solids off'),
+          + 'the cyclone underflow is set too dense',
           'Overflow fines back under control');
         this.cond('uf-limited', sp.ufCw > maxUfCw + 0.002, 'info',
-          (dw === 'cyclones' ? 'Cyclone underflow tops out at ' : 'Decanter cake capped at ')
-          + (maxUfCw * 100).toFixed(1) + '%',
+          'Cyclone underflow tops out at ' + (maxUfCw * 100).toFixed(1) + '%',
           'Underflow density setpoint now achievable');
       } else {
         // Overflow is the balance. If the rise rate beats the settling flux the
@@ -609,24 +791,43 @@ export class Plant {
         );
 
         this.bed = clamp(this.bed + (feedSolids - solidsLost - ufDry) * dtH, 0, DESIGN.thickenerBedMax * 1.15);
-
         bedPct = (this.bed / DESIGN.thickenerBedMax) * 100;
-        const torqueTarget = run ? 28 + 300 * Math.max(0, this.ufCwActual - 0.55) + 0.32 * bedPct : 18;
-        this.torque = approach(this.torque, torqueTarget, 30, dt);
 
+        // Each settler runs against its own limit, and all three read as a
+        // percentage the way a rake torque does. A ring loaded with a dense,
+        // uneven bed wobbles as the square of its speed; a stack's coils heat
+        // as the square of their field, and take minutes to do it.
+        const uf = this.ufCwActual;
+        const limitTarget = dw === 'spinring'
+          ? (run ? 14 + (spin / 10) ** 2 * (20 + 260 * Math.max(0, uf - 0.56) + 0.3 * bedPct) : 6)
+          : dw === 'magstack'
+          ? (run ? 22 + 52 * field * field + 0.12 * bedPct : 15)
+          : (run ? 28 + 300 * Math.max(0, uf - 0.55) + 0.32 * bedPct : 18);
+        this.torque = approach(this.torque, limitTarget, dw === 'magstack' ? 240 : 30, dt);
+
+        const limit = dw === 'spinring' ? ['Ring imbalance', 'slow the ring or back the underflow density off']
+          : dw === 'magstack' ? ['Coil temperature', 'back the field off']
+          : ['Rake torque', 'back the underflow density off'];
         this.cond('rake-trip', this.torque > 92, 'trip',
-          'Rake torque ' + this.torque.toFixed(0) + '% - back the underflow density off',
-          'Rake torque back within limits');
+          limit[0] + ' ' + this.torque.toFixed(0) + '% - ' + limit[1],
+          limit[0] + ' back within limits');
         this.cond('rake-high', this.torque > 78 && this.torque <= 92, 'warn',
-          'Rake torque high at ' + this.torque.toFixed(0) + '%',
-          'Rake torque normal');
+          limit[0] + ' high at ' + this.torque.toFixed(0) + '%',
+          limit[0] + ' normal');
         this.cond('thk-rise', overload > 0.05, 'warn',
-          'Bed rising - overflow at ' + clarity.toFixed(0) + ' mg/L, add flocculant',
+          dw === 'spinring'
+            ? 'Solids carrying over the ring weir at ' + clarity.toFixed(0) + ' mg/L - spin it up or add polymer'
+            : dw === 'magstack'
+            ? 'Flocs escaping the top of the stack at ' + clarity.toFixed(0) + ' mg/L - more field or more seeded floc'
+            : 'Bed rising - overflow at ' + clarity.toFixed(0) + ' mg/L, add flocculant',
           'Overflow clarity recovered');
         this.cond('thk-bed', bedPct > 96, 'warn',
-          'Thickener bed near capacity', 'Thickener bed drawn down');
+          k.settler[0].toUpperCase() + k.settler.slice(1) + ' bed near capacity',
+          k.settler[0].toUpperCase() + k.settler.slice(1) + ' bed drawn down');
         this.cond('uf-limited', sp.ufCw > maxUfCw + 0.002, 'info',
-          'Underflow density capped at ' + (maxUfCw * 100).toFixed(1) + '% by flocculant dose',
+          'Underflow density capped at ' + (maxUfCw * 100).toFixed(1) + '% by '
+          + (dw === 'spinring' ? 'polymer and ring speed'
+            : dw === 'magstack' ? 'seeded floc and field' : 'flocculant dose'),
           'Underflow density setpoint now achievable');
       }
     }
@@ -634,21 +835,28 @@ export class Plant {
 
     this.rakeAngle += dt * 0.0105 * (run ? 1 : 0.15); // ~10 min per revolution
 
-    // ================= 3. Plate press cycle + cake bin ===================
+    // ================= 3. Filter + cake bin ==============================
     if (dw !== 'dry') {
       this.cond('uf-low', run && this.ufVol < 8, 'warn',
-        'Underflow surge tank low - the press is out-running the '
-          + (dw === 'thickener' ? 'thickener' : dw === 'cyclones' ? 'cyclones' : 'centrifuge'),
+        'Underflow surge tank low - the ' + k.filter + ' is out-running the ' + k.settler,
         'Underflow surge tank recovered');
 
       // A press with nothing to filter does not keep shuttling its plates. Stop
       // the plant and the pack holds wherever the cycle had got to, which is
       // also what you come back to when you start it again.
-      if (run && sp.cycleTime > 0) {
+      if (run && sp.cycleTime > 0 && batch(DESIGN.filter)) {
         this.cyclePhase = (this.cyclePhase + dt / (sp.cycleTime * 60)) % 1;
       }
+      this.cond('trap', run && evap > 0.5 && this.trapSlip(evap) > 0.08, 'warn',
+        'Cold trap saturating - ' + trapLoss.toFixed(1) + ' t/h of water vapour getting past it '
+        + 'into space. Ease the magnetrons off, or spin the ring for a denser feed.',
+        'Cold trap catching the vapour again');
+      this.cond('bleed', bleed > 0.8, 'warn',
+        'Fines forced through the cloth at ' + bleed.toFixed(1) + ' t/h - straight out to '
+        + 'sea. Ease the sea differential.',
+        'Filtrate running clear again');
     }
-    const pressing = this.cyclePhase < 0.78;
+    const pressing = batch(DESIGN.filter) ? this.cyclePhase < 0.78 : throughput > 0.5;
 
     // blend new cake into the bin (moisture is a mass-weighted mix)
     const cakeWet = totalMass(cake) * dtH;
@@ -664,7 +872,7 @@ export class Plant {
     const binderPct = clamp(sp.binderDose, 0, 10);
     const cakeBinCw = clamp(1 - this.cakeMoist / 100, 0.5, 0.95);
 
-    const pasteCwForSlump = this.cwForSlump(sp.targetSlump, binderPct);
+    const pasteCwForSlump = this.cwForSlump(sp.targetSlump, binderPct, binder);
     const maxPasteCw = this.maxAchievableCw(cakeBinCw, binderPct);
     const waterLimited = pasteCwForSlump > maxPasteCw + 1e-4;
     const pasteCw = Math.min(pasteCwForSlump, maxPasteCw);
@@ -672,11 +880,12 @@ export class Plant {
     const recipe = this.makePaste(1, binderPct, pasteCw);
     const pasteRho = slurryDensity(recipe);
     const pcv = Cv(recipe);
-    const tauY = yieldStress(pcv, binderPct) * this.feedFx.yieldStress;
+    const tauY = yieldStress(pcv, binderPct) * this.feedFx.yieldStress * binder.stiffness;
     const eta = plasticViscosity(pcv);
     const slumpAchieved = slump(tauY, pasteRho);
     const slumpCone = coneSlump(tauY, pasteRho);
-    const ucs = ucs28(binderPct, Cw(recipe)) * this.feedFx.ucs * DESIGN.cureFactor;
+    const ucs = ucs28(binderPct, Cw(recipe), binder.density) * binder.strength
+      * this.feedFx.ucs * this.cure(binder);
 
     // ================= 5. Pump pull ======================================
     // A positive-displacement pump will deliver whatever the line asks for
@@ -704,7 +913,7 @@ export class Plant {
     this.cakeMass = clamp(this.cakeMass - cakeUsedWet * dtH, 0, DESIGN.cakeBinCap);
     this.siloMass = clamp(this.siloMass - binderRate * dtH, 0, DESIGN.siloCap);
 
-    this.cost.binder += binderRate * dtH * this.binderPrice();
+    this.cost.binder += binderRate * dtH * binder.price;
     this.cost.water += paste.water * dtH * DESIGN.costWaterLost;
     this.cost.floc += feedSolids * floc * 1e-6 * dtH * DESIGN.costFloc;
 
@@ -744,12 +953,20 @@ export class Plant {
     this.cond('silo-low', this.siloMass < 25, 'warn',
       'Binder silo low - order a delivery', 'Binder silo replenished');
     this.cond('cake-low', run && this.cakeMass < 6 && pumpDemand > 1, 'warn',
-      'Cake bin empty - the press cannot keep up with the pump',
-      'Cake bin recovered - press is keeping up again');
+      'Cake bin empty - the ' + k.filter + ' cannot keep up with the pump',
+      'Cake bin recovered - the ' + k.filter + ' is keeping up again');
     this.cond('cake-full', this.cakeMass > DESIGN.cakeBinCap * 0.96, 'warn',
-      'Cake bin full - the press will back up', 'Cake bin drawing down');
+      'Cake bin full - the ' + k.filter + ' will back up', 'Cake bin drawing down');
+    // You can add water at the mixer and never take it out, so a cake wetter
+    // than the recipe puts a ceiling on how stiff the paste can be.
     this.cond('water-limited', waterLimited, 'warn',
-      'Cake too dry for the slump target - shorten the press cycle or drop the target',
+      'Cake too wet for the slump target - ' + {
+        press: 'lengthen the press cycle',
+        deeppress: 'more sea differential, or a longer cycle',
+        microwave: 'more magnetron power, or a slower belt',
+        eopress: 'more voltage, or a slower belt',
+        none: 'the feed is as dry as it comes',
+      }[DESIGN.filter] + ' - or raise the target',
       'Slump target achievable again');
 
     this.paddleAngle += dt * (run && dryActual > 0 ? 3.4 : 0);
@@ -802,7 +1019,7 @@ export class Plant {
 
     // shaft power, kW = Q[m3/s] * dP[kPa] / efficiency
     const power = ((Math.max(actualFlow, 0) / 3600) * this.smPressure) / 0.82;
-    this.cost.power += (power + (run ? DESIGN.auxPowerKw + DESIGN.dewaterPowerKw : 40))
+    this.cost.power += (power + (run ? DESIGN.auxPowerKw : 40) + settlerKw + filterKw)
       * dtH * DESIGN.costPowerKwh;
 
     this.wallLoss += wearRate(pipe.velocity, pcv) * dtH * 0.004;
@@ -841,6 +1058,9 @@ export class Plant {
         overflowClarity: clarity,
         underflow, overflow,
         rakeAngle: this.rakeAngle,
+        g: gRel,
+        field,
+        power: settlerKw,
       },
       ufTank: {
         volume: this.ufVol,
@@ -855,6 +1075,13 @@ export class Plant {
         cake, filtrate,
         cyclePhase: this.cyclePhase,
         pressing,
+        power: filterKw,
+        energy: DESIGN.filter === 'microwave' ? this.dryEnergy()
+          : DESIGN.filter === 'eopress' ? this.eoEnergy(spec.sulphide) : energy,
+        evap, trapLoss, bleed,
+        dp: DESIGN.filter === 'deeppress' ? clamp(sp.seaDp, 10, 440) : 0,
+        volts: DESIGN.filter === 'eopress' ? clamp(sp.voltage, 0, 90) : 0,
+        belt: batch(DESIGN.filter) ? 0 : clamp(sp.belt, 10, 100),
       },
       cakeBin: {
         mass: this.cakeMass,
@@ -901,6 +1128,7 @@ export class Plant {
         ...spec,
         hard: this.hardMode,
         binderType: this.up.binderType,
+        binder,
         effects: fx,
         bypassToTsf: bypassToTsf + this.lastExcess,
         plantCapacity: DESIGN.plantCapacity,
@@ -964,22 +1192,93 @@ export class Plant {
     return lo;
   }
 
-  /** Binder price depends on the blend: slag costs more but resists sulphates. */
-  private binderPrice(): number {
-    return DESIGN.costBinder * (this.up.binderType === 'slag' ? DESIGN.slagPremium : 1);
+  /** The binder in the silo right now: whichever of this site's two is selected. */
+  private binder(): BinderSpec {
+    const [a, b] = DESIGN.binders;
+    return this.up.binderType === b.id ? b : a;
   }
 
-  /** Dry throughput the press can hold, t/h - falls off as sqrt(cycle time). */
+  /** Fraction of its lab strength a binder reaches in this site's cure. */
+  private cure(b: BinderSpec): number {
+    return 1 - (1 - DESIGN.cureFactor) * (1 - b.cold);
+  }
+
+  /** Dry throughput the filter can hold, t/h. */
   private filterCapacity(): number {
-    const tc = clamp(this.sp.cycleTime, 1.5, 14);
-    const feedFactor = clamp(this.ufCwActual / 0.60, 0.55, 1.35);
-    return ((3.55 * DESIGN.filterArea) / Math.sqrt(tc)) * feedFactor * this.feedFx.filterCapacity;
+    const fx = this.feedFx.filterCapacity;
+    switch (DESIGN.filter) {
+      // A belt's tonnes are its speed. A microwave heats water wherever it
+      // sits, so fines hardly slow it down; a belt press still has to drain.
+      case 'microwave':
+        return DESIGN.beltCap * (clamp(this.sp.belt, 10, 100) / 100) * Math.pow(fx, 0.25);
+      case 'eopress':
+        return DESIGN.beltCap * (clamp(this.sp.belt, 10, 100) / 100) * Math.pow(fx, 0.6);
+      default: {
+        // A press falls off as the square root of its cycle time, and Ruth's
+        // law has filtration rate rising as the square root of the pressure
+        // across the cake - which on the seabed is whatever you let the sea put there.
+        const tc = clamp(this.sp.cycleTime, 1.5, 14);
+        const feedFactor = clamp(this.ufCwActual / 0.60, 0.55, 1.35);
+        const sea = DESIGN.filter === 'deeppress' ? Math.sqrt(clamp(this.sp.seaDp, 10, 440) / 60) : 1;
+        return ((3.55 * DESIGN.filterArea) / Math.sqrt(tc)) * feedFactor * fx * sea;
+      }
+    }
   }
 
-  /** Cake moisture, % wet basis - longer cycles squeeze harder, with diminishing return. */
+  /** Cake moisture, % wet basis. */
   private cakeMoisture(): number {
-    const tc = clamp(this.sp.cycleTime, 1.5, 14);
-    return clamp((11.5 + 14 / Math.pow(tc, 0.55)) * this.feedFx.cakeMoisture, 9, 30);
+    const fxm = this.feedFx.cakeMoisture;
+    switch (DESIGN.filter) {
+      case 'microwave': {
+        // whatever water the energy put into each tonne boils off, down to
+        // the film the grains will not let go of
+        const wIn = (1 - this.ufCwActual) / Math.max(this.ufCwActual, 0.3);
+        const wOut = Math.max(0.025 * fxm, wIn - this.dryEnergy() / DESIGN.evapKwh);
+        return clamp((100 * wOut) / (1 + wOut), 2, 45);
+      }
+      case 'eopress': {
+        // The belts alone manage a poor squeeze, and poorer still on a thin
+        // feed. The field drags the rest of the water through to the cathode,
+        // for as long as the cake is in it.
+        const belt = clamp(this.sp.belt, 10, 100);
+        const thin = Math.pow(0.6 / Math.max(this.ufCwActual, 0.4), 0.8);
+        const squeeze = (30 + (8 * belt) / 100) * Math.sqrt(fxm) * thin;
+        const dose = (clamp(this.sp.voltage, 0, 90) * (60 / belt)) / 45;
+        return clamp(squeeze - 16 * (1 - Math.exp(-dose)), 7, 40);
+      }
+      default: {
+        // Longer cycles squeeze harder, with diminishing return - and so does
+        // a harder squeeze.
+        const tc = clamp(this.sp.cycleTime, 1.5, 14);
+        const deep = DESIGN.filter === 'deeppress';
+        const sea = deep ? Math.pow(clamp(this.sp.seaDp, 10, 440) / 60, -0.12) : 1;
+        return clamp((11.5 + 14 / Math.pow(tc, 0.55)) * fxm * sea, deep ? 6 : 9, 30);
+      }
+    }
+  }
+
+  /**
+   * Fraction of the vapour that gets past the cold trap. A few percent always
+   * does; past about half its rating the fins frost over faster than they
+   * are scraped, and the fraction climbs as the square of the overload.
+   */
+  private trapSlip(evap: number): number {
+    return clamp(0.02 + 0.5 * Math.max(0, evap / DESIGN.trapCap - 0.6) ** 2, 0, 0.9);
+  }
+
+  /** Microwave energy put into each dry tonne on the belt, kWh/t. */
+  private dryEnergy(): number {
+    return (clamp(this.sp.mwPower, 0, 20) * 1000) / Math.max(this.filterCapacity(), 1);
+  }
+
+  /**
+   * Electro-osmotic energy per dry tonne, kWh/t: the volts squared across a
+   * cake whose pore water conducts - more so when it is full of dissolved
+   * pyrite - for as long as the belt keeps it between the electrodes.
+   */
+  private eoEnergy(sulphide: number): number {
+    const belt = clamp(this.sp.belt, 10, 100);
+    return DESIGN.eoKwh * clamp(this.sp.voltage, 0, 90) ** 2 * (1 + 0.35 * sulphide) * (60 / belt);
   }
 
   private ufTankHeadroomDry(dtH: number): number {
@@ -1014,12 +1313,13 @@ export class Plant {
   }
 
   /** Invert the slump model to find the Cw that lands on a slump target. */
-  private cwForSlump(targetSlump: number, binderPct: number): number {
+  private cwForSlump(targetSlump: number, binderPct: number, binder: BinderSpec): number {
     let lo = 0.58, hi = 0.90;
+    const stiff = this.feedFx.yieldStress * binder.stiffness;
     for (let i = 0; i < 44; i++) {
       const mid = 0.5 * (lo + hi);
       const s = this.makePaste(1, binderPct, mid);
-      const v = slump(yieldStress(Cv(s), binderPct) * this.feedFx.yieldStress, slurryDensity(s));
+      const v = slump(yieldStress(Cv(s), binderPct) * stiff, slurryDensity(s));
       if (v > targetSlump) lo = mid;
       else hi = mid;
     }

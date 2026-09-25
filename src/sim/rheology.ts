@@ -202,10 +202,11 @@ export function pipeline(
  * 28-day unconfined compressive strength, kPa.
  * Strength climbs steeply with binder dose and with how much water you managed
  * to keep OUT of the mix — which is exactly the tension the plant has to manage.
+ * @param density how steeply this binder leans on paste density; 1 is portland
  */
-export function ucs28(binderDosePct: number, pasteCw: number): number {
+export function ucs28(binderDosePct: number, pasteCw: number, density = 1): number {
   if (binderDosePct <= 0.05) return 0;
-  return 105 * Math.pow(binderDosePct, 1.4) * Math.exp(8 * (pasteCw - 0.76));
+  return 105 * Math.pow(binderDosePct, 1.4) * Math.exp(8 * density * (pasteCw - 0.76));
 }
 
 /** Rough pipe wear: Wear rate scales hard with velocity and with solids loading. */

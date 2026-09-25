@@ -28,17 +28,52 @@ crew pushing a barrow of paste into the other's stope.
 
 In date order, which is the order on the title screen:
 
-| Era | World | Where | Front end | Dewatering | Destination | Target | Budget |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Today | Stope 14-2 North | underground gold mine | ball mill → flotation → deslime cyclones | thickener → surge → press | stope, 1,200 m line, 250 m drop | 1,000 kPa | $21/m³ |
-| 2068 | Station Nereid | Clarion–Clipperton Zone, 4,400 m down | seabed collector → nodule screen → deslime cyclones | cyclone bank → surge → press | Furrow 7, 2,800 m along the floor, no drop | 600 kPa | $23/m³ |
-| 2091 | Mass Driver One | 16 Psyche | open pit → ball mill → magnetic drums | decanter centrifuges → surge → press | slugs fired off a mass driver | 750 kPa | $300/m³ |
-| 2137 | Meridian Undercity | the canyon under Tower 9 | dredge on the old tailings dam → deslime cyclones | thickener → surge → press | Void V-9, 1,500 m line, 620 m drop | 1,500 kPa | $31/m³ |
-| 2805 | Last Shift | Earth, long after | loaders on waste piles → crusher → scrap magnet | none — the feed is dry | Crater 4, an old war crater | 1,200 kPa | $32/m³ |
+| Era | World | Where | Front end | Dewatering | Binders | Destination | Target | Budget |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Today | Stope 14-2 North | underground gold mine | ball mill → flotation → deslime cyclones | thickener → surge → plate press | OPC / slag blend | stope, 1,200 m line, 250 m drop | 1,000 kPa | $21/m³ |
+| 2068 | Station Nereid | Clarion–Clipperton Zone, 4,400 m down | seabed collector → nodule screen → deslime cyclones | cyclone bank → surge → deep-sea filter | portland / sea-magnesia | Furrow 7, 2,800 m along the floor, no drop | 600 kPa | $23/m³ |
+| 2091 | Mass Driver One | 16 Psyche | open pit → ball mill → magnetic drums | spin-ring thickener → surge → microwave drier | geopolymer / ferro-carbonate | slugs fired off a mass driver | 750 kPa | $300/m³ |
+| 2137 | Meridian Undercity | the canyon under Tower 9 | dredge on the old tailings dam → deslime cyclones | magnetic stack → surge → electro-osmotic press | bio-cement / carbon-cured magnesia | Void V-9, 1,500 m line, 620 m drop | 1,500 kPa | $31/m³ |
+| 2805 | Last Shift | Earth, long after | loaders on waste piles → hammer crusher → scrap magnet | none — the feed is dry | OPC / slag blend | Crater 4, an old war crater | 1,200 kPa | $32/m³ |
 
 Every world is the same simulation with different equipment, prices and
 physics. That keeps them honest: nothing in a future world is a special rule,
 it is the same mass balance meeting a different set of constraints.
+
+The kit moves on with the century. Nobody in 2091 is still running a plate
+press, and nothing on an asteroid was ever limestone, so the later worlds swap
+both dewatering stages and the binder for what their site can use - and each
+new machine brings its own controls. Then, in 2805, it goes back: everything
+clever needed a supply chain, the supply chain left on the ships, and what is
+still running is what a robot can mend with a spanner.
+
+| World | First stage, and its controls | Second stage, and its controls | What it runs up against |
+| --- | --- | --- | --- |
+| Today | thickener: flocculant, U/F density | plate press: cycle time | rake torque, the water balance |
+| Nereid | cyclone bank: U/F density | deep-sea filter: **sea differential** (bar) | fines to sea, from both |
+| Psyche | spin-ring thickener: **ring speed** (rpm), polymer, U/F density | microwave drier: **magnetron power** (MW), **belt speed** | ring imbalance, the cold trap |
+| Meridian | magnetic stack: **coil field** (T), seeded floc, U/F density | electro-osmotic press: **electrode voltage**, **belt speed** | coil temperature, the power bill |
+| Last Shift | hammer crusher: scoop rate, **rotor speed** (rpm), **discharge grate** (mm) | none | tramp steel, hammer wear |
+
+The binders are one switch, as the slag blend always was, and each future pair
+is a real choice rather than a better and a worse:
+
+- **Portland or sea-magnesia** (Nereid). Magnesia precipitated out of the
+  seawater at the hull is dearer and a little weaker in the lab, but it hardly
+  minds the 2 °C cure that costs portland a third of its strength. Tuned, they
+  come out within a quarter a cubic metre of each other.
+- **Geopolymer or ferro-carbonate** (Psyche). The geopolymer is the silicate
+  waste itself, activated with an alkali shipped up a gravity well: strong,
+  forgiving of a wet paste, $1,750/t. Ferro-carbonate is iron carbonate grown
+  from the fines the drums miss and the habitat's CO₂: $1,250/t, and weak
+  unless the paste is dense, because its strength leans on density nearly
+  three times as hard. Dry the cake hard enough for it and it is the cheaper
+  fill by a tenth.
+- **Bio-cement or carbon-cured magnesia** (Meridian). Engineered bacteria grow
+  calcite between the grains for $168/t, but a century of pyrite has made the
+  old tailings acid and acid dissolves calcite, so it needs a heavy dose.
+  Reactive magnesia cured with CO₂ off the towers costs $262/t and sulphate
+  does not touch it. Both win; the cheap one wins by less than you would think.
 
 - **Station Nereid (2068).** Nodule mining the second time round, after the
   first generation left a sediment plume four hundred kilometres long. There
@@ -46,31 +81,54 @@ it is the same mass balance meeting a different set of constraints.
   the sea, so a **cyclone bank** dewaters inline. Tighter spigots give a denser
   underflow and throw more fines out of the top, and out of the top is the
   ocean: every tonne of fines that leaves the plant is a $250 plume penalty.
+  The press is a **deep-sea filter**: a pressure hull at one atmosphere with
+  the cloth in its wall, so opening the sea valve lets up to 440 bar of ocean
+  do the squeezing. Filtration goes as the square root of the pressure, but
+  every litre of filtrate then has to be pumped back out against the same sea,
+  and past about 150 bar the fines come through the cloth - more plume. The
+  hull is small, so the sea differential is what keeps the pump fed.
   The line runs 2.8 km flat along the seabed, so static head gives nothing
   back. At 2 °C cement cures at about two-thirds of its surface rate, so the
   same strength needs a stiffer, richer paste. Water is free — the sea is the
   process water tank. The control room is a hut in a pressure sphere, with the
   fish going past the glass.
 - **Mass Driver One (2091).** Surface gravity is 0.144 m/s². A thickener would
-  take a geological age, so **decanter centrifuges** (650 kW of them) do the
-  settling by spinning, and the tailings are bound into slugs and fired off the
-  asteroid at 300 m/s to a station that wants the mass for shielding — there
-  is no stope in a vacuum to put them back into. Gravity is the only thing the
-  pipeline model changes: static head is `ρgΔz`, and there is almost no `g`. Water is
-  shipped in at $400/m³, every cubic metre locked into a slug is lost for good,
-  and binder is $1,650/t for the same reason. The metal comes out on **magnetic
-  drums**; grind coarser than about 140 µm and it stays locked in the silicate.
+  take a geological age, so this one is built inside a **spinning ring** that
+  makes its own gravity - ω²r at the rim, nine-tenths of a g at ten rpm.
+  Faster settles quicker and packs denser, and a ring carrying a heavy, uneven
+  bed wobbles as the square of its speed. What the ring leaves, a **microwave
+  drier** boils off the belt into the vacuum, and a finned cold trap freezes
+  the vapour back out - until it frosts over, and then the water goes to space.
+  The tailings are bound into slugs and fired off the asteroid at 300 m/s to a
+  station that wants the mass for shielding — there is no stope in a vacuum to
+  put them back into. Gravity is the only thing the pipeline model changes:
+  static head is `ρgΔz`, and there is almost no `g`. Water is shipped in at
+  $400/m³ and every cubic metre locked into a slug is lost for good, so the
+  game is a dense slug from a dry cake without frosting the trap. The metal
+  comes out on **magnetic drums**; grind coarser than about 140 µm and it stays
+  locked in the silicate.
 - **Meridian Undercity (2137).** The mine closed in 2040, and ninety years on the old
   stopes are migrating up under the towers. The feed is that mine's own
   **tailings dam**, dredged: the grind is whatever it was in 2040, and after a
-  hundred years of rain it is pyritic — at 1.3% S, ordinary portland loses the
-  strength to sulphate attack and the slag blend is not optional. 620 m of drop,
-  a 1,500 kPa target because a tower stands on it, and power at $0.46/kWh.
+  hundred years of rain it is pyritic — at 1.3% S, anything made of calcite
+  loses the strength to it. There is no floor in the canyon for an 18 m
+  thickener, so the tailings settle in a **magnetic stack** four storeys tall -
+  magnetite-seeded floc pulled down past a column of coils - and the cake is
+  finished on an **electro-osmotic press**, a belt press with electrodes that
+  drag the water through to the cathode. Both run on electricity at $0.46/kWh,
+  so the field and the voltage are bought by the hour. 620 m of drop, and a
+  1,500 kPa target because a tower stands on it.
 - **Last Shift (2805).** No mine and no stope. The feed is two centuries of
   waste piles, scooped by loaders and crushed, with a scrap magnet pulling the
   steel. It arrives **dry**, so there is no thickener, no surge tank and no
-  press — and every litre of mix water is hauled in at $90/m³. The crusher
-  hammers wear like grinding media and have to be ordered. The paste goes into
+  press — and every litre of mix water is hauled in at $90/m³. The crusher is
+  run the way one was in 1950, off a flat belt: **rotor speed** is tip speed,
+  which breaks the rubble finer and cracks the old steel out of the lumps, and
+  wears the hammers as about the 2.5 power of itself; the **discharge grate**
+  is the hammer mill's closed-side setting, finer when it is tight and choked
+  when it is too tight for the loaders. The magnet can only pull steel the
+  crusher has freed, and steel left in the fill rusts it apart - so coarse
+  binds and pumps well, and is no longer simply better. The paste goes into
   the craters the war left.
 
 Consumables arrive the way each era would send them — a tanker today, a pod
@@ -89,12 +147,18 @@ default setpoints and then at a reference recipe:
 
 ```
 scenario     defaults                        reference recipe
-today        runs   51 h  1377 kPa   $20.62    wins   1113 / 1000 kPa  $18.25 of $21
-abyss        runs   53 h   734 kPa   $24.53    wins    614 / 600 kPa  $21.56 of $23
-psyche       runs   52 h  1341 kPa  $339.38    wins   1062 / 750 kPa  $290.81 of $300
-undercity    runs   51 h   899 kPa   $22.84    wins   1622 / 1500 kPa  $27.52 of $31
-caretaker    runs   51 h  1116 kPa   $36.16    wins   1275 / 1200 kPa  $30.29 of $32
+today        runs   51 h  1377 kPa   $20.62    wins   1113 / 1000 kPa  $18.25 of $21  on OPC
+abyss        runs   58 h   734 kPa   $26.22    wins    607 / 600 kPa  $22.08 of $23  on portland
+psyche       runs   55 h  1391 kPa  $359.52    wins   1079 / 750 kPa  $252.87 of $300  on ferro-carbonate
+undercity    runs   51 h   705 kPa   $19.93    wins   1667 / 1500 kPa  $27.78 of $31  on bio-cement
+caretaker    runs   51 h   735 kPa   $36.16    wins   1245 / 1200 kPa  $31.03 of $32  on OPC
 ```
+
+The reference recipes set each world's own machines as well as the binder,
+slump and stroke - 110 bar of sea at Nereid; a ring at 10 rpm, 6 MW of
+magnetrons and an 80% belt on Psyche; 0.6 T and 30 V under Meridian; the
+loaders slowed to 260 t/h in the last shift - and `solve:worlds` sweeps both
+binders, so each world's pair is shown to make on-spec fill on both sides.
 
 Today is the tutorial: its defaults win, narrowly, if you keep the binder and
 the balls topped up. Every other world starts over budget or under strength,
@@ -160,8 +224,14 @@ makes you feel are the trade-offs the plant actually has.
 | Pipe wear | `∝ V^2.4 · (0.35 + Cv)`, eating the bore over the shift | [rheology.ts](src/sim/rheology.ts) |
 | Cure temperature | A maturity factor on the 28-day strength: 0.66 at 2 °C on the seabed | [plant.ts](src/sim/plant.ts) |
 | Dewatering cyclones | Inline, no bed: underflow capped at 60% solids, and the fines lost to overflow climb as the spigots tighten | [plant.ts](src/sim/plant.ts) |
-| Decanter centrifuge | Inline: the cake ceiling rises and the centrate clears with polymer dose; scroll torque in place of rake torque | [plant.ts](src/sim/plant.ts) |
+| Spin-ring thickener | The thickener's flux and density model with gravity `ω²r` at the rim: settling flux as `g^0.9`, a denser underflow ceiling as `log₂ g`, ring imbalance in place of rake torque growing as `rpm²` with the bed | [plant.ts](src/sim/plant.ts) |
+| Magnetic stack | The same bed in a tenth of the floor area, the flux multiplied by `1 + 7B^1.5` for a field `B`; coils drawing `1.2 MW·B²` and heating toward a trip | [plant.ts](src/sim/plant.ts) |
+| Deep-sea filter | The plate press with Ruth's `√ΔP` on capacity, a drier cake as `ΔP^−0.12`, the filtrate pumped back out at `QΔP/η`, and fines through the cloth growing as `ΔP²` | [plant.ts](src/sim/plant.ts) |
+| Microwave drier | Water boiled off at a fixed energy per tonne, set by magnetron power over belt capacity; a cold trap that lets through a share of the vapour rising as the square of its overload | [plant.ts](src/sim/plant.ts) |
+| Electro-osmotic press | A poor belt-press squeeze, wetter on a thin feed, dried further by `1 − e^(−V·dwell)`; energy `∝ V²`, up with the pyrite in the pore water | [plant.ts](src/sim/plant.ts) |
 | Dry feed | No dewatering at all: the cake is the crushed feed, and every cubic metre of mix water is bought | [plant.ts](src/sim/plant.ts) |
+| Binders | One strength model, and per binder a price, a strength factor, a sulphate sensitivity, how steeply it leans on paste density, how sticky it makes the paste, and how much of a cold cure it shrugs off | [binders.ts](src/sim/binders.ts) |
+| Hammer crusher | Bond's law with power rising with rotor speed and the product scaled by the grate; liberation of tramp steel by size and impact, and rust in the fill at 16% of the strength per % of steel | [upstream.ts](src/sim/upstream.ts) |
 | Grind | Bond's law: `W = 10·Wi·(1/√P80 − 1/√F80)` | [upstream.ts](src/sim/upstream.ts) |
 | PSD | Gates-Gaudin-Schuhmann: `F(x) = (x/k)^m` | [upstream.ts](src/sim/upstream.ts) |
 | Cyclone | `d50c ∝ 1/√P`, with a 28% fines bypass to underflow | [upstream.ts](src/sim/upstream.ts) |
@@ -887,6 +957,7 @@ src/
     streams.ts     three-component stream algebra
     upstream.ts    every front end: mill, flotation, magnet, collector, dredge, crusher
     rheology.ts    yield stress, slump, Bingham pipeline, UCS
+    binders.ts     every world's two binders: price, strength and what each one minds
     plant.ts       unit operations, inventories, alarms, the tick loop
   scenario/
     types.ts       what a world is made of
@@ -900,7 +971,8 @@ src/
     particles.ts   pooled point-sprite system for every failure mode
     spill.ts       a vessel overflowing: streams, splash, puddle
     units.ts       thickener, surge tank, press, cake bin, twin silos, mixing tower, pumps
-    dewater.ts     the cyclone bank and the decanter centrifuges
+    dewater.ts     the cyclone bank, the spin ring and the magnetic stack
+    filters.ts     the deep-sea filter, the microwave drier and the electro-osmotic press
     upstream.ts    ball mill, flotation bank, magnetic drums, deslime cyclones
     fronts.ts      seabed collector and riser, the old dam and its dredge, the piles
     deliveries.ts  tanker, pod, lander, drone, teleport

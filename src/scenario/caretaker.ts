@@ -1,4 +1,5 @@
 import type { Scenario } from './types';
+import { portland } from '../sim/binders';
 
 /**
  * Long after everyone left. There is no mine, so the plant fills the craters
@@ -7,6 +8,12 @@ import type { Scenario } from './types';
  * The economics are upside down. Binder is cheap - there is a whole city of
  * concrete to grind back into it. Water is the thing there is none of, and
  * with a dry feed and no press, every litre in the mix was hauled in.
+ *
+ * And the kit has gone back seven centuries. Everything clever needed a
+ * supply chain, and the supply chain left on the ships; what is still
+ * running is what a robot can mend with a spanner. So the crusher is run the
+ * way one was in 1950 - a rotor speed and a grate - and a magnet over the belt
+ * pulls what steel the crusher has broken free.
  */
 export const CARETAKER: Scenario = {
   id: 'caretaker',
@@ -14,7 +21,7 @@ export const CARETAKER: Scenario = {
   title: 'Last Shift',
   place: 'Earth · long after',
   blurb: 'Everyone left. One robot, one plant, a planet of waste piles - and the craters the last war left.',
-  chips: ['Dry feed', 'No thickener or press', 'Water hauled $90/m³', 'Binder $62/t'],
+  chips: ['Dry feed', 'Rotor and grate', 'Water hauled $90/m³', 'Tramp steel'],
   objective: 'Fill Crater 4: 6,000 m³ at 1,200 kPa. Every litre of water is hauled in.',
   budget: 32,
   story: [
@@ -42,6 +49,13 @@ export const CARETAKER: Scenario = {
         + 'and there are the holes. The loaders scoop the piles, the crusher breaks them '
         + 'down, and the plant mixes them with whatever cement can still be ground out '
         + 'of the old city.',
+    },
+    {
+      from: [-58, 16, 26, -44, 4, 2], to: [-52, 12, 20, -44, 4, 2], ms: 8000,
+      text: 'Everything clever broke a long time ago. What still runs is what a robot '
+        + 'can mend with a spanner: a hammer crusher with a rotor and a grate, a magnet '
+        + 'on a gantry, a belt. Crush it fine enough to shake the old steel loose, or '
+        + 'the steel goes into the ground with the rest and rusts it apart.',
     },
     {
       from: [30, 9, 46, 6, 3, 22], to: [22, 7, 40, 4, 3, 20], ms: 7000,
@@ -90,13 +104,14 @@ export const CARETAKER: Scenario = {
   },
   design: {
     dewater: 'dry',
+    filter: 'none',
     dryMoisture: 8,
     pipeLength: 380,
     pipeDrop: 6,
     targetUcs: 1200,
     costWater: 90,
     costWaterLost: 0,
-    costBinder: 62,
+    binders: portland(62),
     costPowerKwh: 0.02,
     costSpill: 400,
   },

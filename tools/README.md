@@ -10,7 +10,7 @@ checked outside the browser.
 | `solve.ts` | Is the objective winnable, and is there a single best answer? Grid-searches binder dose, slump target and stroke rate for on-spec, blockage-free, cheapest fills. |
 | `hardmode.ts` | Does the upstream circuit trade the way it should? Sweeps grind, flotation, deslime cut and ball-charge condition, then runs nine full fills — including two that never order grinding media. |
 | `sizing.ts` | Does the sizing game run ProcessPro's models right, and can every contract be won? Rebuilds ProcessPro's crushing example to within 1%, then has a plain designer close 50 random contracts from the tip to the stope. `DUMP=<seed>` closes one contract and prints the design. Not part of `verify`: it takes about two minutes. |
-| `worlds.ts` | Can every world be won? Runs each scenario to the end at its defaults and at a reference recipe, operating the plant the way a sensible operator would. `solve:worlds [id]` does the full binder × slump × stroke sweep instead. |
+| `worlds.ts` | Can every world be won? Runs each scenario to the end at its defaults and at a reference recipe - which sets that world's own machines as well as the binder, slump and stroke - operating the plant the way a sensible operator would. `solve:worlds [id]` does the full binder dose × slump × stroke sweep on both of the world's binders instead, with its machines at the reference settings. |
 
 `check`, `scenarios` and `solve` run Today's plant on a fixed tailings stream
 (the old standard mode), which isolates the backfill plant from the circuit in
