@@ -5,6 +5,7 @@
  * are filling.
  */
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Telemetry } from '../../sim/plant';
 import { C, metal, matte, glow } from '../palette';
 import { box } from '../parts';
@@ -74,6 +75,91 @@ const LANES: Array<[number, number, number, number, number]> = [
   [-60, 20, 120, 150, 100],
 ];
 
+/**
+ * A box with texture coordinates in metres - so a wall of windows keeps its
+ * floor height whatever the tower - for merging.
+ */
+function towerBox(w: number, h: number, d: number, x: number, y0: number, z: number, u0: number) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const p = geo.getAttribute('position'), n = geo.getAttribute('normal'), uv = geo.getAttribute('uv');
+  for (let i = 0; i < p.count; i++) {
+    const across = Math.abs(n.getX(i)) > 0.5 ? p.getZ(i) : p.getX(i);
+    // four-metre bays, three and a half metre floors
+    uv.setXY(i, (across + u0) / 32, (p.getY(i) + h / 2) / 112);
+  }
+  geo.translate(x, y0 + h / 2, z);
+  return geo;
+}
+
+/**
+ * The canyon: the city packed shoulder to shoulder behind and either side of
+ * the plant, taller the further out it stands - three, four, six hundred
+ * metres - so from the pad it closes in overhead, with skybridges strung
+ * across the gap. One mesh per window pattern, one per neon colour.
+ */
+function canyon(texes: THREE.CanvasTexture[], r: () => number): THREE.Group {
+  const g = new THREE.Group();
+  g.userData.noCollide = true;
+  const walls: THREE.BufferGeometry[][] = texes.map(() => []);
+  const neon = [0xff4fd8, 0x35e0d0, 0x8a6aff];
+  const lit: THREE.BufferGeometry[][] = neon.map(() => []);
+  const edge = (w: number, h: number, d: number, x: number, y: number, z: number, k: number) =>
+    lit[k].push(new THREE.BoxGeometry(w, h, d).translate(x, y, z));
+  for (let x = -460; x <= 440; x += 30) {
+    for (let z = -520; z <= 140; z += 30) {
+      const px = x + (r() - 0.5) * 12, pz = z + (r() - 0.5) * 12;
+      // the plant's side of the canyon, and every camera's, stay open
+      if (pz > -80 && Math.abs(px + 20) < 250) continue;
+      const d = Math.hypot(px + 20, (pz + 40) * 1.2);
+      if (d < 170 || d > 560) continue;
+      const w = 20 + r() * 16, dd = 20 + r() * 16;
+      const h = 110 + (d - 170) * 0.9 + r() * r() * 260;
+      const k = Math.floor(r() * texes.length);
+      walls[k].push(towerBox(w, h, dd, px, -0.4, pz, r() * 64));
+      // a setback, and a spire on some
+      if (r() < 0.5) walls[k].push(towerBox(w * 0.7, h * 0.25, dd * 0.7, px, h - 0.4, pz, r() * 64));
+      if (r() < 0.4) {
+        const c = Math.floor(r() * neon.length);
+        edge(0.6, h, 0.6, px - w / 2, h / 2, pz + dd / 2, c);
+        edge(0.6, h, 0.6, px + w / 2, h / 2, pz + dd / 2, c);
+        edge(w + 1, 0.8, dd + 1, px, h * (0.3 + 0.5 * r()), pz, c);
+      }
+    }
+  }
+  // skybridges, across the canyon from wall to wall
+  const bridges: Array<[number, number, number, number]> = [
+    // z, y, x0, x1
+    [-95, 72, -230, 190], [-120, 118, -260, 210], [-150, 164, -280, 230],
+    [-20, 150, -270, 220], [10, 196, -280, 240], [-60, 236, -300, 260],
+  ];
+  for (const [z, y, x0, x1] of bridges) {
+    const L = x1 - x0;
+    const k = Math.floor(r() * texes.length);
+    const deck = towerBox(L, 7, 9, 0, y, 0, 0);
+    deck.rotateY(0).translate((x0 + x1) / 2, 0, z);
+    walls[k].push(deck);
+    const c = Math.floor(r() * neon.length);
+    for (const s of [-1, 1]) edge(L, 0.4, 0.4, (x0 + x1) / 2, y - 0.2, z + s * 4.6, c);
+  }
+  // and two running the other way, over the flanks
+  for (const [x, y] of [[-205, 96], [175, 132]] as const) {
+    const deck = towerBox(9, 7, 300, x, y, -120, 0);
+    walls[0].push(deck);
+    edge(0.4, 0.4, 300, x - 4.6, y - 0.2, -120, 1);
+    edge(0.4, 0.4, 300, x + 4.6, y - 0.2, -120, 1);
+  }
+  const shell = { color: 0x0c0a12, roughness: 0.35, metalness: 0.75 };
+  walls.forEach((list, i) => {
+    const tex = texes[i].clone();
+    tex.needsUpdate = true;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    const m = new THREE.MeshStandardMaterial({ ...shell, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.45 });
+    g.add(new THREE.Mesh(mergeGeometries(list), m));
+  });
+  lit.forEach((list, i) => { if (list.length) g.add(new THREE.Mesh(mergeGeometries(list), glow(neon[i], 2.2))); });
+  return g;
+}
+
 export function buildCity(root: THREE.Group): Dressing {
   const r = rng(71);
   const texes = [windowTexture(1), windowTexture(2), windowTexture(3)];
@@ -116,6 +202,8 @@ export function buildCity(root: THREE.Group): Dressing {
     }
     placed++;
   }
+
+  root.add(canyon(texes, r));
 
   // ---- Tower 9, standing over the workings
   const t9 = new THREE.Group();
