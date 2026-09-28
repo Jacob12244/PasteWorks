@@ -40,8 +40,8 @@ from the pattern.
 scope, no group, nothing to provision in the `Identity` repo. Anyone with the
 link can open it, which is the whole point of the thing. The page holds no
 data, writes nothing, and makes no outbound calls — every number on screen is
-computed in the page. The arena holds two games in memory - the plant and the
-mine, up to fifteen in each - and nothing else: names are handed out rather
+computed in the page. The arena holds three games in memory - the plant, the
+mine and the filter plant, up to fifteen in each - and nothing else: names are handed out rather
 than typed, there is no chat, and a restart empties the rooms, which is all
 there is to lose. If any of that ever
 changes, it stops being a link you can hand out and it needs the full
@@ -94,7 +94,7 @@ docker compose up -d
 docker compose ps
 curl -sS http://127.0.0.1:8480/healthz       # -> ok
 curl -sS http://127.0.0.1:8481/healthz       # -> ok
-curl -sS http://127.0.0.1:8481/play/status   # -> {"online":0,"max":15,"rooms":{"plant":...,"mine":...}}
+curl -sS http://127.0.0.1:8481/play/status   # -> {"online":0,"max":15,"rooms":{"plant":...,"mine":...,"cad":...}}
 ```
 
 The arena container is read-only, capped at 256 MB and half a core. A full
@@ -114,14 +114,30 @@ Certbot rewrites the single port 80 block into a TLS block plus a redirect,
 keeping every location, which is how the other sites here are set up.
 
 That is the whole deployment. Open `https://pasteworks.minesmart.cloud`, and
-`https://pasteworks.minesmart.cloud/?arena` and `?arena=mine` for Paste Wars,
-and send the link to anyone.
+`https://pasteworks.minesmart.cloud/?arena`, `?arena=mine` and `?arena=cad`
+for Paste Wars, and send the link to anyone.
+
+## The filter plant map comes from this disk, not from git
+
+The third Paste Wars map, the filter plant (`?arena=cad`), is a real plant
+converted from its CAD model by `cad/`. The model (`public/local/plant.glb`,
+10 MB) and the collision world baked from it (`server/worlds/cad.*`, 7 MB)
+are kept out of git, so the images only have the map when `build-push.ps1`
+runs in a checkout that has both files. It says which it found: with neither
+it warns and builds the other two maps, and with one and not the other, or a
+world older than the model, it stops. The page offers the map only when the
+model is there, and the arena opens its room only when the world is.
+
+The model is served from `/local/plant.glb`, gzipped at build time (7 MB on
+the wire). It is cleared for use with every client and project name stripped;
+`node cad/audit.mjs public/local/plant.glb` checks, against a list of names
+kept in `cad/out/names.txt`, which is not in git either.
 
 ## Adding Paste Wars to a running server
 
-Both maps go through the same `/play` location - the mine is `/play?map=mine`,
-and nginx passes the query string through - so the step below is the only
-one, whichever maps the arena serves.
+Every map goes through the same `/play` location - the mine is
+`/play?map=mine`, and nginx passes the query string through - so the step
+below is the only one, whichever maps the arena serves.
 
 A server set up before Paste Wars needs one hand step, because certbot has
 since rewritten the live vhost and copying the repo's file over it would drop
@@ -206,6 +222,11 @@ fetches nothing at runtime, so it works fine on a phone tether and behind a
 corporate proxy; Paste Wars needs a WebSocket, which some corporate proxies
 will not pass.
 
-The arena image is about 140 MB: Node on Alpine, one bundled file, and the
-two baked collision worlds, 1.5 MB between them. Running, it holds both in
-well under 100 MB.
+The filter plant adds its 10 MB model (7 MB gzipped), fetched only by
+`?arena=cad` and `?cad`; the title screen only asks whether it is there.
+
+The arena image is about 145 MB: Node on Alpine, one bundled file, and the
+three baked collision worlds, 8.7 MB between them - the filter plant's 1.1
+million triangles are most of it. Unpacking them peaks at about 165 MB, inside
+the 256 MB cap; with all three rooms full it holds about 95 MB and uses a few
+percent of its half core.

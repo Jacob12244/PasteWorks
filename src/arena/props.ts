@@ -264,9 +264,9 @@ function spools(): THREE.Group {
 }
 
 /** Temporary site fence round the bounds: posts, mesh, and a hi-vis shade band. */
-function fence(): THREE.Group {
+export function fence(bounds = BOUNDS): THREE.Group {
   const g = new THREE.Group();
-  const { x0, x1, z0, z1 } = BOUNDS;
+  const { x0, x1, z0, z1 } = bounds;
   const sides: Array<[THREE.Vector3, THREE.Vector3]> = [
     [V(x0, 0, z0), V(x1, 0, z0)], [V(x1, 0, z0), V(x1, 0, z1)],
     [V(x1, 0, z1), V(x0, 0, z1)], [V(x0, 0, z1), V(x0, 0, z0)],

@@ -1,22 +1,25 @@
 import { ROUND_S, POWER_CUTS, type Condition, type PowerCuts } from './rules';
 import * as plant from './map';
 import * as mine from './mine';
+import * as cad from './cad';
 import type { Pickup } from './map';
 import type { Base } from './mine';
 
 /**
- * The two places Paste Wars is played, and what each one is.
+ * The places Paste Wars is played, and what each one is.
  *
  *   plant   everyone for themselves on the backfill plant, as it has always been
  *   mine    Day shift against Night shift on the 760 Level: one barrow of
  *           paste a crew, and the other crew's stope to fill with it
+ *   cad     everyone for themselves in a real plant, converted from its CAD
+ *           model - only where that model is, which for now is one laptop
  *
  * Each runs as a room of its own on the server, fifteen slots each, and a
  * page asks for one by name when it opens its socket.
  */
 
-export type MapId = 'plant' | 'mine';
-export const MAP_IDS: MapId[] = ['plant', 'mine'];
+export type MapId = 'plant' | 'mine' | 'cad';
+export const MAP_IDS: MapId[] = ['plant', 'mine', 'cad'];
 
 export interface MapDef {
   id: MapId;
@@ -42,6 +45,16 @@ export interface MapDef {
   power?: PowerCuts;
   /** server/worlds/<world>.bin.gz */
   world: string;
+  /**
+   * Built from a model that is not in the repository: a page without the
+   * model does not offer it, and a server without its baked world skips it.
+   */
+  local?: boolean;
+  /**
+   * The walker, where the game's own does not fit: a plant drawn in CAD has
+   * real walkways and real headroom, so you are a person's width and duck.
+   */
+  walker?: { radius: number; duck: boolean };
 }
 
 export const MAPS: Record<MapId, MapDef> = {
@@ -79,6 +92,25 @@ export const MAPS: Record<MapId, MapDef> = {
     bases: mine.BASES,
     power: POWER_CUTS,
     world: 'mine',
+  },
+  cad: {
+    id: 'cad',
+    name: 'Filter plant',
+    mode: 'ffa',
+    bounds: cad.BOUNDS,
+    clip: cad.CLIP,
+    pickups: cad.PICKUPS,
+    spawns: cad.SPAWNS,
+    spawnYaw: cad.spawnYaw,
+    conditions: [
+      { feel: 'earth', label: 'Surface', note: 'Five floors of it. The high ground is up the stairs.' },
+      { feel: 'space', label: 'Psyche gravity', note: 'Mag boots on. A jump will take you a floor up - mind your head.' },
+    ],
+    round: ROUND_S,
+    fall: -20,
+    world: 'cad',
+    local: true,
+    walker: { radius: 0.25, duck: true },
   },
 };
 

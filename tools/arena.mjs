@@ -28,7 +28,13 @@
 //   power     the lights go and come back, again and again (sped up here), and
 //             someone joining in the dark is told how long it has left
 //   lamp      a cap lamp switched off shows as off - but never with the barrow
+// and in the filter plant, where it has been baked (its CAD model is local only):
+//   join      a room of its own, with its own world
+//   round     two on shift starts it
+//   hit       paste lands across the open ground inside the fence
+//   plant     a lump thrown at the plant stops on the plant - the binder tanker
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
@@ -329,6 +335,35 @@ try {
   check('mine: joins in the dark', !!h4?.out && h4.out[0] === next.at && h4.out[1] === next.end, h4?.out ? `off ${h4.out.join(' - ')}` : 'no cut in the hello');
   [m1, m2, m3, m4].forEach((b) => b.close());
   await sleep(200);
+
+  // ---- the filter plant, if this machine has baked it
+  if (fs.existsSync(path.join(root, 'server', 'worlds', 'cad.bin.gz'))) {
+    const c1 = new Bot(PORT, 'cad'), c2 = new Bot(PORT, 'cad');
+    const hc = await c1.hello();
+    await c2.hello();
+    check('cad: join', hc?.map === 'cad' && /^[0-9a-f]{8}:\d+$/.test(hc.hash), hc ? `world ${hc.hash}` : 'no hello back');
+    const crd = await c1.wait((m) => m.t === 'Rd' && m.r.st === 'play');
+    check('cad: round starts', !!crd);
+    // six metres apart on the open ground inside the east fence
+    await Promise.all([c1.walkTo(51, -4), c2.walkTo(51, 2)]);
+    c2.fireAt([51, 20, 40], 900);
+    await sleep(2100);
+    const ch0 = c1.msgs.length;
+    c1.fireAt([c2.pos[0], c2.pos[1] + 1.1, c2.pos[2]], 1);
+    const ch = await c1.wait((m) => m.t === 'H' && m.v === c2.id, 2000, ch0);
+    check('cad: paste hits', !!ch, ch ? `damage ${ch.d}` : 'no hit');
+    // from the south fence, straight at the side of the binder tanker 14 m in
+    await c1.walkTo(-24, 28);
+    await sleep(700);
+    const cx0 = c1.msgs.length;
+    c1.fireAt([-24, 1.6, 0], 60);
+    const cx = await c1.wait((m) => m.t === 'X' && m.n, 2000, cx0);
+    // on its side, off the ground - wherever the arc brings it down on the tanker
+    check('cad: the plant stops a lump', !!cx && cx.p[2] > 12.5 && cx.p[2] < 15 && cx.p[1] > 0.3 && cx.n[2] > 0.9,
+      cx ? `landed at ${cx.p.join(', ')}, normal ${cx.n.join(', ')}` : 'no impact');
+    [c1, c2].forEach((b) => b.close());
+    await sleep(200);
+  }
 
   // ---- full, last: a slot is held a while after a socket goes, so
   // thirteen more on top of a and b makes fifteen, then one too many

@@ -26,6 +26,23 @@ $shaTag = "sha-$sha"
 $dirty = git -C $repoRoot status --porcelain
 if ($dirty) { Write-Warning "Working tree has uncommitted changes - the :$shaTag tag will not match the image contents exactly." }
 
+# The Filter plant map is local only: its model and its baked world are kept
+# out of git, so it ships only when both are on this disk. Say which it is.
+$model = Join-Path $repoRoot 'public\local\plant.glb'
+$world = Join-Path $repoRoot 'server\worlds\cad.bin.gz'
+$hasModel = Test-Path $model
+$hasWorld = Test-Path $world
+if ($hasModel -and $hasWorld) {
+    if ((Get-Item $world).LastWriteTime -lt (Get-Item $model).LastWriteTime) {
+        throw 'server\worlds\cad.bin.gz is older than public\local\plant.glb - run npm run bake, or the page and the server will hold different worlds.'
+    }
+    Write-Host '==> the Filter plant map goes in (public\local\plant.glb, server\worlds\cad.*)' -ForegroundColor Cyan
+} elseif ($hasModel -or $hasWorld) {
+    throw 'Only half the Filter plant map is here: public\local\plant.glb and server\worlds\cad.* go together.'
+} else {
+    Write-Warning 'No Filter plant model on this disk (public\local\plant.glb) - these images will not have that map. Build from a checkout that has it to keep it.'
+}
+
 $targets = if ($Only) { @($Only) } else { @('web', 'arena') }
 foreach ($name in $targets) {
     $image = "$registry/pasteworks-$name"

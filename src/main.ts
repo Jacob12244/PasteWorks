@@ -22,13 +22,17 @@ const params = new URLSearchParams(location.search);
 const direct = scenarioById(params.get('s'));
 
 // Paste Wars is a page of its own, loaded only by the people who ask for it:
-// ?arena for the plant, ?arena=mine for the 760 Level, bake or bake-mine for tools/bake.mjs.
-// So is the sizing game, at ?size.
+// ?arena for the plant, ?arena=mine for the 760 Level, ?arena=cad for the plant
+// converted from CAD, and bake, bake-mine, bake-cad for tools/bake.mjs. So is
+// the sizing game, at ?size, and the CAD test bench, at ?cad.
 if (params.has('size')) {
   import('./sizing/game').then((m) => m.startSizing(params.get('size')));
 } else if (params.has('arena')) {
   const a = params.get('arena') ?? '';
-  import('./arena/arena').then((m) => m.startArena(a.startsWith('bake') ? 'bake' : 'play', a.endsWith('mine') ? 'mine' : 'plant'));
+  import('./arena/arena').then((m) => m.startArena(a.startsWith('bake') ? 'bake' : 'play', a.replace(/^bake-?/, '')));
+} else if (params.has('cad')) {
+  // local test bench for a plant converted from CAD - see cad/convert.py
+  import('./cad/cad').then((m) => m.startCad());
 } else if (direct) {
   start(direct, params.get('intro') !== '0');
 } else {

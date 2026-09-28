@@ -235,3 +235,13 @@
   #arena .board .bb { flex-direction: column; }
 }
 #arena.crews .status { top: 106px; }
+
+/* a map whose model is not on this machine */
+.pw-absent {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 420px;
+  padding: 22px 26px; text-align: center; background: var(--panel-solid); border: 1px solid var(--line);
+  border-radius: 12px; color: var(--txt);
+}
+.pw-absent b { display: block; font-size: 15px; letter-spacing: .12em; color: var(--accent); margin-bottom: 8px; }
+.pw-absent p { margin: 0 0 16px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+.pw-absent a { color: var(--accent); text-decoration: none; }

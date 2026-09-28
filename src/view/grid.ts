@@ -39,6 +39,9 @@ export class TriangleGrid {
 
   get size() { return this.n; }
 
+  /** the triangle segment() last hit, by the order it was added; -1 for none */
+  hit = -1;
+
   add(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) {
     this.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
   }
@@ -193,6 +196,7 @@ export class TriangleGrid {
       best = t;
       bi = i;
     }
+    this.hit = bi;
     if (bi < 0) return null;
     const o = bi * 9;
     const e1x = p[o + 3] - p[o], e1y = p[o + 4] - p[o + 1], e1z = p[o + 5] - p[o + 2];

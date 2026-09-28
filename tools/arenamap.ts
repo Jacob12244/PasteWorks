@@ -134,6 +134,14 @@ function check(map: MapDef) {
   });
 }
 
-for (const m of Object.values(MAPS)) check(m);
+for (const m of Object.values(MAPS)) {
+  // built from a model outside the repository: checked only where it was baked
+  if (m.local && !fs.existsSync(`server/worlds/${m.world}.bin.gz`)) {
+    console.log(`
+${m.name}: not baked here - a local map, skipped`);
+    continue;
+  }
+  check(m);
+}
 console.log(failed ? `\n${failed} failed` : '\nmaps ok');
 process.exit(failed ? 1 : 0);

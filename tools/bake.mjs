@@ -1,6 +1,6 @@
 // Bake each arena's collision world out of the page, for the arena server.
 //
-//   npm run bake                                    both maps (needs the dev server on :5180)
+//   npm run bake                                    every map (needs the dev server on :5180)
 //   node tools/bake.mjs http://localhost:5180/ mine  just one
 //
 // The server has no renderer and cannot build the plant or carve the mine,
@@ -9,7 +9,11 @@
 // collision world to it, and this writes it out as server/worlds/<world>.bin.gz
 // - nine float32s a triangle - with its fingerprint beside it in <world>.json.
 //
-// Re-bake after changing anything in either place. A page whose world does
+// The filter plant is built from a CAD model kept out of the repository
+// (public/local/plant.glb), so it is baked only where that model is, and its
+// world stays out of the repository with it.
+//
+// Re-bake after changing anything in any of them. A page whose world does
 // not match the server's bake says so in the console on joining.
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
@@ -19,11 +23,16 @@ import { fileURLToPath } from 'node:url';
 
 const base = process.argv[2] ?? 'http://localhost:5180/';
 const only = process.argv[3];
-const maps = [['plant', 'bake'], ['mine', 'bake-mine']].filter(([m]) => !only || m === only);
-const out = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'server', 'worlds');
+const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const cad = fs.existsSync(path.join(repo, 'public', 'local', 'plant.glb'));
+const maps = [['plant', 'bake'], ['mine', 'bake-mine'], ...(cad ? [['cad', 'bake-cad']] : [])]
+  .filter(([m]) => !only || m === only);
+const out = path.join(repo, 'server', 'worlds');
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
+  // the filter plant is a million triangles, handed back as one string
+  protocolTimeout: 600000,
   args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'],
 });
 try {

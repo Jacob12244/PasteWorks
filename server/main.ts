@@ -50,10 +50,14 @@ const log = (s: string) => console.log(new Date().toISOString().slice(0, 19) + '
  * a triangle, gzipped. Found next to the bundle in the image, and in
  * server/worlds when run from the repo.
  */
-function loadWorld(name: string) {
+function worldFile(name: string) {
   const here = __dirname;
-  const file = [path.join(here, 'worlds', name + '.bin.gz'), path.join(here, '..', 'worlds', name + '.bin.gz')]
+  return [path.join(here, 'worlds', name + '.bin.gz'), path.join(here, '..', 'worlds', name + '.bin.gz')]
     .find((f) => fs.existsSync(f));
+}
+
+function loadWorld(name: string) {
+  const file = worldFile(name);
   if (!file) throw new Error(`no baked world ${name} - run npm run bake`);
   const raw = zlib.gunzipSync(fs.readFileSync(file));
   const tris = new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
@@ -66,6 +70,11 @@ function loadWorld(name: string) {
 const rooms = new Map<MapId, Room>();
 for (const id of MAP_IDS) {
   const map = MAPS[id];
+  // built from a model outside the repository: here only if it was baked here
+  if (map.local && !worldFile(map.world)) {
+    log(`${id}: no baked world - a local map, skipped`);
+    continue;
+  }
   const world = loadWorld(map.world);
   log(`${id}: world ${path.basename(world.file)}, ${world.grid.size} triangles, ${world.hash}`);
   rooms.set(id, new Room(world.grid, map, {

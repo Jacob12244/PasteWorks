@@ -5,10 +5,10 @@ import { Stage } from '../view/scene';
 import { World } from '../view/world';
 import { Walker, collisionWorld } from '../view/walk';
 import { FEEL } from '../view/feel';
-import { gridHash } from '../view/grid';
-import type { FX } from '../view/particles';
+import { gridHash, type TriangleGrid } from '../view/grid';
+import { FX } from '../view/particles';
 import { applyScenario, scenarioById } from '../scenario';
-import { buildProps, Pickups } from './props';
+import { buildProps, Pickups, fence } from './props';
 import { Avatars } from './avatars';
 import { Lumps } from './lumps';
 import { ViewModel } from './viewmodel';
@@ -19,7 +19,7 @@ import { Mine } from './mine/build';
 import { mains } from './mine/light';
 import { Barrows } from './barrows';
 import { Minimap, type MapView } from './minimap';
-import { MAPS, type MapId } from './shared/maps';
+import { mapById, type MapDef } from './shared/maps';
 import { LABELS } from './shared/mine';
 import {
   WEAPONS, SEND_HZ, RESPAWN_DELAY, PASTE_SLOW, MAX_PLAYERS, INTERP_MS, HP, TEAMS, BARROW,
@@ -38,13 +38,18 @@ import { segBody } from './shared/physics';
  * The mine is the 760 Level, underground: Day shift against Night shift,
  * one barrow of paste a crew, and the other crew's stope to fill with it.
  *
+ * The filter plant is a real one, converted from its CAD model: five floors
+ * of process building, every stair climbable, everyone for themselves. Its
+ * model lives on one laptop for now, and the map with it.
+ *
  * Either way you walk it with the same walker, and a lump flies against the
  * same collision world the server was baked from.
  *
  *   ?arena             the plant
  *   ?arena=mine        the 760 Level
+ *   ?arena=cad         the filter plant, where its model is (public/local/plant.glb)
  *   ?arena=bake        build the plant's collision world and hand it to tools/bake.mjs
- *   ?arena=bake-mine   the same, for the mine
+ *   ?arena=bake-mine   the same, for the mine, and bake-cad for the filter plant
  */
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -64,6 +69,8 @@ interface Venue {
   fx: FX;
   update(dt: number): void;
   mine?: Mine;
+  /** its own collision world, where the stock one - everything drawn, bar the see-through - is wrong */
+  collide?(clip: THREE.Box3): TriangleGrid;
   debug: Record<string, unknown>;
 }
 
@@ -92,23 +99,67 @@ function mineVenue(stage: Stage, light: boolean): Venue {
   return { root: mine.root, fx: mine.fx, update: (dt) => mine.update(dt), mine, debug: { mine } };
 }
 
-export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant') {
-  const map = MAPS[mapId];
+/**
+ * The filter plant stands still - nothing in it runs - under the day look,
+ * walls and roofs off, fenced. It brings its own collision world: the stair
+ * ramps it is walked on are never drawn, and the cladding, which is not
+ * drawn here, is not solid either. Null if the model is not on this machine.
+ */
+async function cadVenue(stage: Stage, map: MapDef): Promise<Venue | null> {
+  const { loadPlant, looks, survey, SUN } = await import('../cad/plant');
+  const plant = await loadPlant();
+  if (!plant) return null;
+  stage.applyLook(looks(scenarioById('today')!.look).day);
+  stage.key.position.copy(SUN);
+  // Nothing in it moves, and nor does the sun: its shadows are drawn once,
+  // over the fenced ground only, and are the sharper for it.
+  const cam = stage.key.shadow.camera;
+  cam.left = cam.bottom = -70;
+  cam.right = cam.top = 70;
+  cam.updateProjectionMatrix();
+  stage.renderer.shadowMap.autoUpdate = false;
+  stage.renderer.shadowMap.needsUpdate = true;
+  for (const m of plant.cladding) m.visible = false;
+  const solid = new THREE.Group();
+  solid.add(plant.model, fence(map.bounds));
+  const fx = new FX();
+  const root = new THREE.Group();
+  root.add(plant.ground, solid, fx.group);
+  stage.scene.add(root);
+  return {
+    root, fx,
+    update: (dt) => fx.update(dt),
+    collide: (clip) => survey(solid, plant.ground, clip).grid,
+    debug: { plant },
+  };
+}
+
+export async function startArena(mode: 'play' | 'bake' = 'play', mapId = 'plant') {
+  const map = mapById(mapId);
   const teams = map.mode === 'barrow';
   if (!teams) applyScenario(scenarioById('today')!);
   document.documentElement.style.setProperty('--accent', '#ff7a1a');
-  document.title = teams ? 'PasteWorks · Paste Wars · 760 Level' : 'PasteWorks · Paste Wars';
+  document.title = map.id === 'plant' ? 'PasteWorks · Paste Wars' : 'PasteWorks · Paste Wars · ' + map.name;
   const canvas = document.getElementById('view') as HTMLCanvasElement;
 
   const stage = new Stage(canvas);
-  const venue = teams ? mineVenue(stage, mode === 'play') : plantVenue(stage);
+  const found = map.id === 'cad' ? await cadVenue(stage, map)
+    : teams ? mineVenue(stage, mode === 'play') : plantVenue(stage);
+  if (!found) {
+    const note = document.createElement('div');
+    note.className = 'pw-absent';
+    note.innerHTML = `<b>${map.name}</b><p>Its model is not on this machine - it is built from a CAD model kept out of the repository.</p><a href="?arena">To the plant instead &#9656;</a>`;
+    document.body.appendChild(note);
+    return;
+  }
+  const venue: Venue = found;
   const mine = venue.mine;
 
   // The collision world, before anything has moved: the same triangles the
   // server was baked from, so a lump lands on the same girder at both ends.
   const t0 = performance.now();
   const clip = new THREE.Box3(V(...map.clip.min), V(...map.clip.max));
-  const grid = collisionWorld(venue.root, clip);
+  const grid = venue.collide ? venue.collide(clip) : collisionWorld(venue.root, clip);
   const hash = gridHash(grid.triangles());
   console.info(`arena: ${map.id}, ${grid.size} triangles in ${(performance.now() - t0).toFixed(0)} ms, ${hash}`);
 
@@ -159,7 +210,8 @@ export function startArena(mode: 'play' | 'bake' = 'play', mapId: MapId = 'plant
     avatars.beams(stage.scene, 2);
   }
 
-  const walker = new Walker(stage.camera, canvas, FEEL.earth);
+  const walker = new Walker(stage.camera, canvas, FEEL.earth, map.walker?.radius);
+  walker.duck = !!map.walker?.duck;
   walker.useWorld(grid);
   walker.bounds = map.bounds;
   const [sx, sz] = map.spawns[0];

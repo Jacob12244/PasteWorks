@@ -25,6 +25,8 @@ const STICK = 4;
 /** the highest kerb you walk up without jumping */
 const STEP_UP = 0.45;
 const STEPS = 5;
+/** the lowest you duck, and how fast you stand back up, m/s */
+const CROUCH = 1.2, STAND = 2.5;
 
 /**
  * Everything a walker can bump into, as world-space triangles in a grid.
@@ -104,7 +106,7 @@ export class Walker {
   /** pointer lock lost: the world keeps running, the walker stands still */
   paused = false;
   private world: TriangleGrid | null = null;
-  private cap = new Capsule(V(0, R, 0), V(0, H - R, 0), R);
+  private cap: Capsule;
   private vel = V();
   private onFloor = false;
   private yaw = 0;
@@ -119,6 +121,15 @@ export class Walker {
   bounds: { x0: number; x1: number; z0: number; z1: number } | null = null;
   /** how much of your speed you have - less, with paste on your boots */
   speedScale = 1;
+  /**
+   * Duck under whatever is at head height and not below it. A plant drawn
+   * in CAD has beams and pipe at 1.7 m that a person just stoops under; the
+   * game's own plant is built with headroom, and the arena wants none of it.
+   */
+  duck = false;
+  /** how tall you are standing right now, and what the camera shows of it */
+  private height = H;
+  private shownHeight = H;
 
   onPause: (paused: boolean) => void = () => {};
 
@@ -126,7 +137,14 @@ export class Walker {
     private camera: THREE.PerspectiveCamera,
     private dom: HTMLElement,
     private feel: Feel,
+    /**
+     * Capsule radius. The game's plant was built round a broad walker; a plant
+     * drawn in CAD was built round real people, and its walkways show it.
+     */
+    private r = R,
   ) {
+    this.cap = new Capsule(V(0, r, 0), V(0, H - r, 0), r);
+    this._body.radius = r + 0.01;
     addEventListener('keydown', (e) => {
       if (this.active && !this.paused) this.keys.add(e.code);
     });
@@ -176,13 +194,14 @@ export class Walker {
   get velocity() { return this.vel; }
   get grounded() { return this.onFloor; }
   /** where your feet are */
-  get feet() { return V(this.cap.start.x, this.cap.start.y - R, this.cap.start.z); }
+  get feet() { return V(this.cap.start.x, this.cap.start.y - this.r, this.cap.start.z); }
 
   /** Put your feet here without turning you round - a correction, not a respawn. */
   moveTo(at: THREE.Vector3) {
-    this.cap.start.set(at.x, at.y + R, at.z);
-    this.cap.end.set(at.x, at.y + H - R, at.z);
+    this.cap.start.set(at.x, at.y + this.r, at.z);
+    this.cap.end.set(at.x, at.y + H - this.r, at.z);
     this.vel.set(0, 0, 0);
+    this.height = this.shownHeight = H;
   }
 
   /** Put you somewhere, facing some way, standing still. */
@@ -221,16 +240,25 @@ export class Walker {
 
   respawn() {
     const s = this.spawnAt;
-    this.cap.start.set(s.x, s.y + R, s.z);
-    this.cap.end.set(s.x, s.y + H - R, s.z);
+    this.cap.start.set(s.x, s.y + this.r, s.z);
+    this.cap.end.set(s.x, s.y + H - this.r, s.z);
     this.vel.set(0, 0, 0);
+    this.height = this.shownHeight = H;
+    // Put down somewhere low, arrive crouched - standing, the floor above
+    // would push you down through the one you are on.
+    if (this.duck && this.world) {
+      for (let t = H; t >= CROUCH - 1e-6; t -= 0.1) {
+        if (this.headroom(t)) { this.height = this.shownHeight = t; break; }
+      }
+      this.cap.end.set(s.x, s.y + this.height - this.r, s.z);
+    }
     this.yaw = this.spawnYaw;
     this.pitch = -0.04;
   }
 
   /** where your eyes are */
   get eye() {
-    return V(this.cap.end.x, this.cap.end.y + EYE - (H - R), this.cap.end.z);
+    return V(this.cap.end.x, this.cap.end.y + EYE - (H - this.r), this.cap.end.z);
   }
 
   /** where you are facing, flat */
@@ -251,8 +279,10 @@ export class Walker {
     const striding = this.onFloor && speed > 0.6;
     this.bob += dt * (striding ? speed * 1.8 : 0);
     const bobY = striding ? Math.sin(this.bob) * 0.035 : 0;
+    // the capsule ducks at once; the head goes down over a few frames
+    this.shownHeight += (this.height - this.shownHeight) * (1 - Math.exp(-dt * 14));
     const e = this.eye;
-    this.camera.position.set(e.x, e.y + bobY, e.z);
+    this.camera.position.set(e.x, e.y + bobY + this.shownHeight - this.height, e.z);
     this.camera.rotation.set(this.pitch, this.yaw, 0);
   }
 
@@ -290,6 +320,7 @@ export class Walker {
     from.start.copy(this.cap.start);
     from.end.copy(this.cap.end);
     this.cap.translate(this._t.copy(this.vel).multiplyScalar(h));
+    if (this.duck) this.ducking(h);
     this.onFloor = false;
     const hit = this.world!.capsuleIntersect(this.cap);
     if (hit) this.resolve(hit);
@@ -325,8 +356,8 @@ export class Walker {
     const b = this.bounds;
     if (!b) return;
     const x = this.cap.start.x, z = this.cap.start.z;
-    const cx = Math.max(b.x0 + R, Math.min(b.x1 - R, x));
-    const cz = Math.max(b.z0 + R, Math.min(b.z1 - R, z));
+    const cx = Math.max(b.x0 + this.r, Math.min(b.x1 - this.r, x));
+    const cz = Math.max(b.z0 + this.r, Math.min(b.z1 - this.r, z));
     if (cx !== x) this.vel.x = 0;
     if (cz !== z) this.vel.z = 0;
     if (cx !== x || cz !== z) this.cap.translate(this._t.set(cx - x, 0, cz - z));
@@ -334,6 +365,44 @@ export class Walker {
 
   private _from = new Capsule(V(), V(), R);
   private _keep = new Capsule(V(), V(), R);
+  /**
+   * You from the knees up, a shade wider than you: stand up only where you
+   * clear everything. A wall you are against blocks every height, so it never
+   * makes you duck - only something with room under it does.
+   */
+  private _body = new Capsule(V(), V(), R + 0.01);
+
+  /**
+   * Is there room for you here, from the knees up, if you stood this tall?
+   * Knees up, so stair treads ahead and a kerb underfoot are not in it.
+   */
+  private headroom(tall: number) {
+    const c = this.cap.start, r = this._body.radius, feet = c.y - this.r;
+    this._body.start.set(c.x, feet + 0.5 + r, c.z);
+    this._body.end.set(c.x, feet + tall - r, c.z);
+    return !this.world!.capsuleIntersect(this._body);
+  }
+
+  /**
+   * Something in the way: if there is room lower down, it is a beam, a pipe or
+   * the edge of the floor above, and you duck under it. If there is not, it is
+   * a wall, and the collision stops you as it always did. Out from under,
+   * stand back up.
+   */
+  private ducking(h: number) {
+    let tall = this.height;
+    if (!this.headroom(tall)) {
+      for (let t = tall - 0.1; t >= CROUCH - 1e-6; t -= 0.1) {
+        if (this.headroom(t)) { tall = t; break; }
+      }
+    } else if (tall < H) {
+      const up = Math.min(H, tall + STAND * h);
+      if (this.headroom(up)) tall = up;
+    }
+    this.height = tall;
+    const s = this.cap.start;
+    this.cap.end.set(s.x, s.y + tall - 2 * this.r, s.z);
+  }
 
   private stepUp(from: Capsule, h: number) {
     const w = this.world!;

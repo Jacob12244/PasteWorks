@@ -3,6 +3,7 @@
  * each. Nothing 3D is built until you pick, so this paints immediately.
  */
 import type { Scenario } from '../scenario';
+import { MODEL as CAD_MODEL } from '../arena/shared/cad';
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string) => {
   const e = document.createElement(tag);
@@ -233,8 +234,9 @@ export class Welcome {
    * Paste Wars, under the worlds: a strip rather than a sixth card, because it
    * is not a sixth place to run the plant - it is what happens after the
    * shift. Two doors: the plant itself, every one for themselves, and the
-   * 760 Level underground, Day shift against Night shift. Each says how many
-   * are on shift in it, if the arena answers.
+   * 760 Level underground, Day shift against Night shift - and a third, the
+   * filter plant, on a machine that has its CAD model. Each says how many are
+   * on shift in it, if the arena answers.
    */
   private arena() {
     const strip = el('div', 'wl-arena');
@@ -246,12 +248,8 @@ export class Welcome {
       <span class="wa-name"><em>After the shift</em><b>PASTE WARS</b></span>
       <span class="wa-text">Up to fifteen at once in each. Paste gun, rocks, and filter cake off the floor
         to reload. Keyboard and mouse.</span>`;
-    const doors: Array<[string, string, string, string]> = [
-      ['plant', '?arena', 'The plant', 'Splat tag on the running plant'],
-      ['mine', '?arena=mine', '760 Level', 'Day v Night underground: a barrow of paste into their stope'],
-    ];
     const counts: Record<string, HTMLElement> = {};
-    for (const [id, href, name, blurb] of doors) {
+    const door = (id: string, href: string, name: string, blurb: string) => {
       const a = el('a', 'wa-door') as HTMLAnchorElement;
       a.href = href;
       a.innerHTML = `<b>${name}</b><span>${blurb}</span><span class="wa-count"></span><span class="wa-go">Clock on&nbsp;&nbsp;&#9656;</span>`;
@@ -263,7 +261,17 @@ export class Welcome {
         setTimeout(() => { location.href = a.href; }, 420);
       };
       strip.append(a);
-    }
+    };
+    door('plant', '?arena', 'The plant', 'Splat tag on the running plant');
+    door('mine', '?arena=mine', '760 Level', 'Day v Night underground: a barrow of paste into their stope');
+    // built from a CAD model that lives on one machine: a door only where it is
+    fetch(CAD_MODEL, { method: 'HEAD' })
+      .then((r) => {
+        if (r.ok && !(r.headers.get('content-type') ?? '').includes('html')) {
+          door('cad', '?arena=cad', 'Filter plant', 'A real plant from its CAD model: five floors, every stair');
+        }
+      })
+      .catch(() => { /* not here */ });
     fetch('/play/status', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((s: { online: number; max: number; rooms?: Record<string, { online: number; max: number }> } | null) => {
